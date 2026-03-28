@@ -13,6 +13,13 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     async def webhook_health():
         return {"status": "healthy"}
 
+    @app.middleware("http")
+    async def no_cache(request, call_next):
+        response = await call_next(request)
+        if request.url.path == "/call":
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.get("/call-config")
     async def call_config():
         with app.state.web_call_lock:
