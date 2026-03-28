@@ -56,51 +56,60 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
 <button id="end">End Call</button>
 <div id="log" style="margin-top:20px;font-size:0.9em;opacity:0.7;max-width:90vw;text-align:center"></div>
 
-<script>
+<script type="module">
   const ASSISTANT_CONFIG = {assistant_json};
   const PUBLIC_KEY = "{public_key}";
-  let vapiInstance = null;
 
-  // Load VAPI SDK
-  var s = document.createElement('script');
-  s.src = "https://cdn.jsdelivr.net/gh/VapiAI/html-script-tag@latest/dist/assets/index.js";
-  s.defer = true;
-  s.async = true;
-  s.onload = function() {{
-    log('SDK loaded. Tap Connect.');
-  }};
-  document.head.appendChild(s);
+  import VapiModule from "https://cdn.jsdelivr.net/npm/@vapi-ai/web@2.5.2/+esm";
+  const Vapi = VapiModule.default || VapiModule;
 
-  document.getElementById('connect').onclick = function() {{
+  let vapi = null;
+
+  document.getElementById('connect').onclick = async function() {{
     document.getElementById('status').textContent = 'Connecting...';
     document.getElementById('status').className = 'pulse';
     document.getElementById('connect').style.display = 'none';
 
     try {{
-      vapiInstance = window.vapiSDK.run({{
-        apiKey: PUBLIC_KEY,
-        assistant: ASSISTANT_CONFIG,
-        config: {{ hide: true, position: 'none' }}
+      vapi = new Vapi(PUBLIC_KEY);
+
+      vapi.on('call-start', () => {{
+        document.getElementById('status').textContent = 'Connected — speak now';
+        document.getElementById('status').className = '';
+        document.getElementById('end').style.display = 'inline-block';
       }});
-      // Hide VAPI's built-in widget button
-      setTimeout(function() {{
-        var btn = document.getElementById('vapi-support-btn');
-        if (btn) btn.style.display = 'none';
-      }}, 500);
-      document.getElementById('status').textContent = 'Connected — speak now';
-      document.getElementById('status').className = '';
-      document.getElementById('end').style.display = 'inline-block';
+
+      vapi.on('call-end', () => {{
+        document.getElementById('status').textContent = 'Call ended';
+        document.getElementById('status').className = '';
+        document.getElementById('end').style.display = 'none';
+        document.getElementById('connect').style.display = 'inline-block';
+      }});
+
+      vapi.on('message', (msg) => {{
+        if (msg.type === 'transcript' && msg.transcriptType === 'final') {{
+          log(msg.role + ': ' + msg.transcript);
+        }}
+      }});
+
+      vapi.on('error', (e) => {{
+        log('Error: ' + JSON.stringify(e));
+        document.getElementById('status').textContent = 'Error — check log';
+        document.getElementById('status').className = '';
+        document.getElementById('connect').style.display = 'inline-block';
+      }});
+
+      await vapi.start(ASSISTANT_CONFIG);
     }} catch(e) {{
       log('Failed: ' + e.message);
       document.getElementById('status').textContent = 'Failed to connect';
+      document.getElementById('status').className = '';
       document.getElementById('connect').style.display = 'inline-block';
     }}
   }};
 
   document.getElementById('end').onclick = function() {{
-    if (vapiInstance) vapiInstance.stop();
-    document.getElementById('status').textContent = 'Call ended';
-    document.getElementById('end').style.display = 'none';
+    if (vapi) vapi.stop();
   }};
 
   function log(msg) {{
