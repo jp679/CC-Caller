@@ -19,7 +19,9 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     async def no_cache(request, call_next):
         response = await call_next(request)
         if request.url.path in ("/call", "/call-gemini"):
-            response.headers["Cache-Control"] = "no-store"
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
         return response
 
     @app.post("/gemini-transcript")
@@ -142,6 +144,7 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
       ws = new WebSocket(url);
 
       ws.onopen = () => {{
+        log('WebSocket open, sending setup...');
         ws.send(JSON.stringify({{
           setup: {{
             model: 'models/' + MODEL,
@@ -156,15 +159,26 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
         }}));
       }};
 
-      ws.onmessage = (event) => {{
-        const msg = JSON.parse(event.data);
+      ws.onmessage = async (event) => {{
+        let raw = event.data;
+        if (raw instanceof Blob) raw = await raw.text();
+        let msg;
+        try {{
+          msg = JSON.parse(raw);
+        }} catch(e) {{
+          log('Parse error: ' + raw.substring(0, 100));
+          return;
+        }}
+        const keys = Object.keys(msg);
+        if (keys[0] !== 'serverContent') log('Event: ' + keys.join(','));
 
-        if (msg.setupComplete) {{
+        if (msg.setupComplete !== undefined) {{
+          log('Setup complete! Starting mic...');
           isConnected = true;
           document.getElementById('status').textContent = 'Connected — speak now';
           document.getElementById('status').className = '';
           document.getElementById('end').style.display = 'inline-block';
-          startMic();
+          startMic().catch(err => log('Mic error: ' + err.message));
           return;
         }}
 
@@ -192,12 +206,14 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
       }};
 
       ws.onerror = (e) => {{
-        log('WebSocket error');
+        log('WebSocket error: ' + JSON.stringify(e));
         document.getElementById('status').textContent = 'Error';
         document.getElementById('connect').style.display = 'inline-block';
+        document.getElementById('connect').disabled = false;
       }};
 
-      ws.onclose = () => {{
+      ws.onclose = (e) => {{
+        log('WebSocket closed: code=' + e.code + ' reason=' + e.reason);
         isConnected = false;
         stopMic();
         document.getElementById('status').textContent = 'Call ended — tap Connect for a new call';
@@ -255,7 +271,7 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
       const b64 = btoa(binary);
 
       ws.send(JSON.stringify({{
-        realtimeInput: {{ mediaChunks: [{{ mimeType: 'audio/pcm;rate=16000', data: b64 }}] }}
+        realtimeInput: {{ audio: {{ data: b64, mimeType: 'audio/pcm;rate=16000' }} }}
       }}));
     }};
 
@@ -269,7 +285,12 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
   }}
 
   // --- Audio playback ---
-  const playCtx = new (window.AudioContext || window.webkitAudioContext)({{ sampleRate: 24000 }});
+  let playCtx = null;
+  function getPlayCtx() {{
+    if (!playCtx) playCtx = new (window.AudioContext || window.webkitAudioContext)({{ sampleRate: 24000 }});
+    if (playCtx.state === 'suspended') playCtx.resume();
+    return playCtx;
+  }}
 
   function playNext() {{
     if (playQueue.length === 0) {{ isPlaying = false; return; }}
@@ -283,11 +304,12 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     const float32 = new Float32Array(int16.length);
     for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 0x7FFF;
 
-    const buf = playCtx.createBuffer(1, float32.length, 24000);
+    const ctx = getPlayCtx();
+    const buf = ctx.createBuffer(1, float32.length, 24000);
     buf.getChannelData(0).set(float32);
-    const src = playCtx.createBufferSource();
+    const src = ctx.createBufferSource();
     src.buffer = buf;
-    src.connect(playCtx.destination);
+    src.connect(ctx.destination);
     src.onended = () => playNext();
     src.start();
   }}
