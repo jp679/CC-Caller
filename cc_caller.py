@@ -14,7 +14,13 @@ from dotenv import load_dotenv
 from pyngrok import ngrok
 
 from summarizer import summarize_output
-from vapi_client import build_assistant_config, create_call
+from vapi_client import (
+    build_assistant_config,
+    build_inbound_assistant_config,
+    configure_inbound_number,
+    clear_inbound_number,
+    create_call,
+)
 from webhook import create_app
 
 load_dotenv()
@@ -96,11 +102,15 @@ def is_termination(transcript: str) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="CC-Caller: Voice-driven Claude Code loop")
-    parser.add_argument("instruction", help="Initial instruction for Claude")
+    parser.add_argument("instruction", nargs="?", default=None, help="Initial instruction for Claude (omit for inbound mode)")
     parser.add_argument("--mode", choices=["always", "on-need", "interval"], default="always")
+    parser.add_argument("--inbound", action="store_true", help="Wait for an inbound call instead of starting with an instruction")
     parser.add_argument("--interval-minutes", type=int, default=15)
     parser.add_argument("--port", type=int, default=int(os.getenv("WEBHOOK_PORT", "8765")))
     args = parser.parse_args()
+
+    if not args.inbound and not args.instruction:
+        parser.error("Either provide an instruction or use --inbound")
 
     mode = CallMode(args.mode)
     api_key = os.environ["VAPI_API_KEY"]
@@ -127,6 +137,25 @@ def main():
     session_id = None
     instruction = args.instruction
     last_call_time = 0.0
+
+    if args.inbound:
+        print("\n--- Inbound mode: configuring phone number ---")
+        inbound_config = build_inbound_assistant_config(webhook_url)
+        configure_inbound_number(api_key, phone_number_id, inbound_config)
+        print(f"Call your VAPI number to start a task. Waiting...")
+        try:
+            instruction = transcript_queue.get()
+        except KeyboardInterrupt:
+            print("\nInterrupted while waiting. Exiting.")
+            clear_inbound_number(api_key, phone_number_id)
+            ngrok.disconnect(public_url)
+            return
+        print(f"You said: {instruction}")
+        if is_termination(instruction):
+            print("Termination signal received. Exiting.")
+            clear_inbound_number(api_key, phone_number_id)
+            ngrok.disconnect(public_url)
+            return
 
     try:
         while True:
@@ -185,6 +214,12 @@ def main():
     except KeyboardInterrupt:
         print("\nInterrupted. Exiting.")
     finally:
+        if args.inbound:
+            print("Clearing inbound config...")
+            try:
+                clear_inbound_number(api_key, phone_number_id)
+            except Exception:
+                pass
         ngrok.disconnect(public_url)
 
 
