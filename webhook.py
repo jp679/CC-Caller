@@ -143,8 +143,28 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
       const url = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=' + GEMINI_KEY;
       ws = new WebSocket(url);
 
+      // Transcript batching
+      let userBuf = '';
+      let agentBuf = '';
+      let userTimer = null;
+      let agentTimer = null;
+
+      function flushUser() {{
+        if (userBuf.trim()) {{
+          log('You: ' + userBuf.trim());
+          userMessages.push(userBuf.trim());
+        }}
+        userBuf = '';
+        userTimer = null;
+      }}
+      function flushAgent() {{
+        if (agentBuf.trim()) log('Agent: ' + agentBuf.trim());
+        agentBuf = '';
+        agentTimer = null;
+      }}
+
       ws.onopen = () => {{
-        log('WebSocket open, sending setup...');
+        log('Connecting...');
         ws.send(JSON.stringify({{
           setup: {{
             model: 'models/' + MODEL,
@@ -153,6 +173,10 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
               speechConfig: {{ voiceConfig: {{ prebuiltVoiceConfig: {{ voiceName: 'Kore' }} }} }}
             }},
             systemInstruction: {{ parts: [{{ text: SYSTEM_PROMPT }}] }},
+            tools: [{{ functionDeclarations: [{{
+              name: 'endCall',
+              description: 'End the voice call. Use this when the user says go ahead, that is all, stop, or we are done.'
+            }}] }}],
             inputAudioTranscription: {{}},
             outputAudioTranscription: {{}}
           }}
@@ -165,15 +189,11 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
         let msg;
         try {{
           msg = JSON.parse(raw);
-        }} catch(e) {{
-          log('Parse error: ' + raw.substring(0, 100));
-          return;
-        }}
-        const keys = Object.keys(msg);
-        if (keys[0] !== 'serverContent') log('Event: ' + keys.join(','));
+        }} catch(e) {{ return; }}
 
+        // Setup complete
         if (msg.setupComplete !== undefined) {{
-          log('Setup complete! Starting mic...');
+          log('Connected — speak now');
           isConnected = true;
           document.getElementById('status').textContent = 'Connected — speak now';
           document.getElementById('status').className = '';
@@ -182,16 +202,42 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
           return;
         }}
 
+        // Function call (endCall)
+        if (msg.toolCall) {{
+          const fc = msg.toolCall.functionCalls;
+          if (fc) {{
+            for (const call of fc) {{
+              if (call.name === 'endCall') {{
+                log('Call ending...');
+                // Send tool response then close
+                ws.send(JSON.stringify({{
+                  toolResponse: {{
+                    functionResponses: [{{ id: call.id, name: 'endCall', response: {{ result: 'ok' }} }}]
+                  }}
+                }}));
+                setTimeout(() => endCall(), 2000);
+                return;
+              }}
+            }}
+          }}
+        }}
+
+        // Server content (audio + transcripts)
         if (msg.serverContent) {{
           const sc = msg.serverContent;
 
           if (sc.inputTranscription && sc.inputTranscription.text) {{
-            log('You: ' + sc.inputTranscription.text);
-            userMessages.push(sc.inputTranscription.text);
+            flushAgent();
+            userBuf += ' ' + sc.inputTranscription.text;
+            if (userTimer) clearTimeout(userTimer);
+            userTimer = setTimeout(flushUser, 1000);
           }}
 
           if (sc.outputTranscription && sc.outputTranscription.text) {{
-            log('Agent: ' + sc.outputTranscription.text);
+            flushUser();
+            agentBuf += ' ' + sc.outputTranscription.text;
+            if (agentTimer) clearTimeout(agentTimer);
+            agentTimer = setTimeout(flushAgent, 1000);
           }}
 
           if (sc.modelTurn && sc.modelTurn.parts) {{
@@ -213,9 +259,10 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
       }};
 
       ws.onclose = (e) => {{
-        log('WebSocket closed: code=' + e.code + ' reason=' + e.reason);
         isConnected = false;
         stopMic();
+        flushUser();
+        flushAgent();
         document.getElementById('status').textContent = 'Call ended — tap Connect for a new call';
         document.getElementById('end').style.display = 'none';
         document.getElementById('connect').style.display = 'inline-block';
