@@ -9,9 +9,10 @@ import uuid
 from enum import Enum
 from typing import Optional, Tuple
 
+import re
+
 import uvicorn
 from dotenv import load_dotenv
-from pyngrok import ngrok
 
 from summarizer import summarize_output
 import requests as http_requests
@@ -110,6 +111,29 @@ def send_notification(title: str, message: str, url: str = "") -> None:
         print(f"Notification failed: {e}")
 
 
+def start_tunnel(port: int, method: str) -> tuple:
+    """Start a tunnel and return (public_url, cleanup_fn)."""
+    if method == "cloudflare":
+        proc = subprocess.Popen(
+            ["cloudflared", "tunnel", "--url", f"http://localhost:{port}"],
+            stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+        )
+        start = time.time()
+        while time.time() - start < 15:
+            line = proc.stderr.readline()
+            m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
+            if m:
+                url = m.group(0)
+                return url, lambda: proc.terminate()
+        proc.terminate()
+        raise RuntimeError("Cloudflare tunnel failed to start")
+    else:
+        from pyngrok import ngrok
+        tunnel = ngrok.connect(port, "http")
+        url = tunnel.public_url
+        return url, lambda: ngrok.disconnect(url)
+
+
 def is_termination(transcript: str) -> bool:
     result = subprocess.run(
         ["claude", "-p", TERMINATION_CHECK_PROMPT],
@@ -126,6 +150,7 @@ def main():
     parser.add_argument("--mode", choices=["always", "on-need", "interval"], default="always")
     parser.add_argument("--inbound", action="store_true", help="Wait for an inbound call instead of starting with an instruction")
     parser.add_argument("--web", action="store_true", help="Use web-based voice calls instead of phone (free, no Twilio needed)")
+    parser.add_argument("--tunnel", choices=["cloudflare", "ngrok"], default="cloudflare", help="Tunnel provider (default: cloudflare, free)")
     parser.add_argument("--interval-minutes", type=int, default=15)
     parser.add_argument("--port", type=int, default=int(os.getenv("WEBHOOK_PORT", "8765")))
     args = parser.parse_args()
@@ -154,8 +179,8 @@ def main():
     )
     server_thread.start()
 
-    # Start ngrok tunnel
-    public_url = ngrok.connect(args.port, "http").public_url
+    # Start tunnel
+    public_url, cleanup_tunnel = start_tunnel(args.port, args.tunnel)
     webhook_url = f"{public_url}/webhook"
     print(f"Webhook listening at {webhook_url}")
 
@@ -182,12 +207,12 @@ def main():
             instruction = transcript_queue.get()
         except KeyboardInterrupt:
             print("\nInterrupted while waiting. Exiting.")
-            ngrok.disconnect(public_url)
+            cleanup_tunnel()
             return
         print(f"You said: {instruction}")
         if is_termination(instruction):
             print("Termination signal received. Exiting.")
-            ngrok.disconnect(public_url)
+            cleanup_tunnel()
             return
 
     elif args.inbound:
@@ -200,13 +225,13 @@ def main():
         except KeyboardInterrupt:
             print("\nInterrupted while waiting. Exiting.")
             clear_inbound_number(api_key, phone_number_id)
-            ngrok.disconnect(public_url)
+            cleanup_tunnel()
             return
         print(f"You said: {instruction}")
         if is_termination(instruction):
             print("Termination signal received. Exiting.")
             clear_inbound_number(api_key, phone_number_id)
-            ngrok.disconnect(public_url)
+            cleanup_tunnel()
             return
 
     try:
@@ -295,7 +320,7 @@ def main():
                 clear_inbound_number(api_key, phone_number_id)
             except Exception:
                 pass
-        ngrok.disconnect(public_url)
+        cleanup_tunnel()
 
 
 if __name__ == "__main__":
