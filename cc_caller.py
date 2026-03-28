@@ -50,16 +50,17 @@ TERMINATION_CHECK_PROMPT = (
 )
 
 
-def run_claude(instruction: str, session_id: Optional[str]) -> Tuple[str, str]:
-    cmd = ["claude", "-p", "--output-format", "text"]
-    if session_id:
-        cmd.extend(["--resume", session_id])
+def run_claude(instruction: str, session_id: str, is_first_run: bool = False) -> Tuple[str, str]:
+    if is_first_run:
+        # Try to resume existing session; if it fails, start a new one with that ID
+        cmd = ["claude", "-p", "--output-format", "text", "-c", "--resume", session_id, instruction]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0 and "not found" in result.stderr.lower():
+            cmd = ["claude", "-p", "--output-format", "text", "--session-id", session_id, instruction]
+            result = subprocess.run(cmd, capture_output=True, text=True)
     else:
-        session_id = str(uuid.uuid4())
-        cmd.extend(["--session-id", session_id])
-    cmd.append(instruction)
-
-    result = subprocess.run(cmd, capture_output=True, text=True)
+        cmd = ["claude", "-p", "--output-format", "text", "--resume", session_id, instruction]
+        result = subprocess.run(cmd, capture_output=True, text=True)
     return result.stdout, session_id
 
 
@@ -151,6 +152,7 @@ def main():
     parser.add_argument("--inbound", action="store_true", help="Wait for an inbound call instead of starting with an instruction")
     parser.add_argument("--web", action="store_true", help="Use web-based voice calls instead of phone (free, no Twilio needed)")
     parser.add_argument("--tunnel", choices=["cloudflare", "ngrok"], default="cloudflare", help="Tunnel provider (default: cloudflare, free)")
+    parser.add_argument("--session-id", type=str, default="caller", help="Claude session ID (default: 'caller', persists across restarts)")
     parser.add_argument("--interval-minutes", type=int, default=15)
     parser.add_argument("--port", type=int, default=int(os.getenv("WEBHOOK_PORT", "8765")))
     args = parser.parse_args()
@@ -184,9 +186,12 @@ def main():
     webhook_url = f"{public_url}/webhook"
     print(f"Webhook listening at {webhook_url}")
 
-    session_id = None
+    session_id = args.session_id
     instruction = args.instruction
     last_call_time = 0.0
+
+    if session_id:
+        print(f"Resuming Claude session: {session_id}")
 
     if args.inbound and args.web:
         print("\n--- Web inbound mode ---")
@@ -234,11 +239,13 @@ def main():
             cleanup_tunnel()
             return
 
+    first_run = True
     try:
         while True:
             print(f"\n--- Running Claude ---")
             print(f"Instruction: {instruction[:100]}...")
-            output, session_id = run_claude(instruction, session_id)
+            output, session_id = run_claude(instruction, session_id, is_first_run=first_run)
+            first_run = False
             print(f"Output length: {len(output)} chars")
 
             if not should_call(mode, output, last_call_time, args.interval_minutes):
