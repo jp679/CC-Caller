@@ -231,6 +231,14 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
             userBuf += ' ' + sc.inputTranscription.text;
             if (userTimer) clearTimeout(userTimer);
             userTimer = setTimeout(flushUser, 1000);
+
+            // Client-side end detection as fallback
+            const lower = userBuf.toLowerCase();
+            const endPhrases = ['go ahead', "that's all", 'stop', "we're done", 'done for now', 'end session', 'hang up'];
+            if (endPhrases.some(p => lower.includes(p))) {{
+              log('End phrase detected, closing...');
+              setTimeout(() => endCall(), 3000);
+            }}
           }}
 
           if (sc.outputTranscription && sc.outputTranscription.text) {{
@@ -238,6 +246,12 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
             agentBuf += ' ' + sc.outputTranscription.text;
             if (agentTimer) clearTimeout(agentTimer);
             agentTimer = setTimeout(flushAgent, 1000);
+
+            // If agent says goodbye phrases, auto-close
+            const aLower = agentBuf.toLowerCase();
+            if (aLower.includes('call back when') || aLower.includes('starting now') || aLower.includes('ending session')) {{
+              setTimeout(() => endCall(), 3000);
+            }}
           }}
 
           if (sc.modelTurn && sc.modelTurn.parts) {{
