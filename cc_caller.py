@@ -50,12 +50,17 @@ TERMINATION_CHECK_PROMPT = (
 )
 
 
+def name_to_uuid(name: str) -> str:
+    """Convert a human-friendly session name to a deterministic UUID."""
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"cc-caller.{name}"))
+
+
 def run_claude(instruction: str, session_id: str, is_first_run: bool = False) -> Tuple[str, str]:
     if is_first_run:
-        # Try to resume existing session; if it fails, start a new one with that ID
-        cmd = ["claude", "-p", "--output-format", "text", "-c", "--resume", session_id, instruction]
+        # Try to resume existing session; if it fails, start a new one
+        cmd = ["claude", "-p", "--output-format", "text", "--resume", session_id, instruction]
         result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0 and "not found" in result.stderr.lower():
+        if result.returncode != 0:
             cmd = ["claude", "-p", "--output-format", "text", "--session-id", session_id, instruction]
             result = subprocess.run(cmd, capture_output=True, text=True)
     else:
@@ -192,12 +197,12 @@ def main():
     webhook_url = f"{public_url}/webhook"
     print(f"Webhook listening at {webhook_url}")
 
-    session_id = args.session_id
+    session_name = args.session_id
+    session_id = name_to_uuid(session_name)
     instruction = args.instruction
     last_call_time = 0.0
 
-    if session_id:
-        print(f"Resuming Claude session: {session_id}")
+    print(f"Claude session: {session_name} ({session_id})")
 
     if args.inbound and args.gemini:
         print("\n--- Gemini Live inbound mode ---")

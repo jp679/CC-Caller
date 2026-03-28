@@ -19,8 +19,9 @@ def test_summarize_output_returns_summary_and_detail():
     assert result["summary"] == "I fixed the login bug. All tests pass. What's next?"
     assert "bcrypt" in result["detail"]
 
-    call_args = mock_run.call_args
-    assert call_args[1]["input"] == "Full claude output here..."
+    # Output should be embedded in the prompt argument
+    prompt_arg = mock_run.call_args[0][0][2]  # ["claude", "-p", prompt]
+    assert "Full claude output here..." in prompt_arg
 
 
 def test_summarize_output_handles_non_json_gracefully():

@@ -13,9 +13,9 @@ FALLBACK_SUMMARY = "Claude finished working but I couldn't generate a summary. C
 
 
 def summarize_output(claude_output: str) -> dict:
+    prompt = f"{SUMMARIZE_PROMPT}\n\n---\n\n{claude_output}"
     result = subprocess.run(
-        ["claude", "-p", SUMMARIZE_PROMPT],
-        input=claude_output,
+        ["claude", "-p", prompt],
         capture_output=True,
         text=True,
     )
