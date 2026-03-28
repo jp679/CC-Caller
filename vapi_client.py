@@ -1,3 +1,5 @@
+from typing import Optional
+
 import requests
 
 VAPI_CALL_URL = "https://api.vapi.ai/call"
@@ -96,45 +98,81 @@ def build_inbound_assistant_config(webhook_url: str) -> dict:
     }
 
 
+VAPI_ASSISTANT_URL = "https://api.vapi.ai/assistant"
+INBOUND_ASSISTANT_NAME = "CC-Caller Inbound"
+
+
+def _find_inbound_assistant(api_key: str) -> Optional[str]:
+    response = requests.get(
+        VAPI_ASSISTANT_URL,
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+    response.raise_for_status()
+    for assistant in response.json():
+        if assistant.get("name") == INBOUND_ASSISTANT_NAME:
+            return assistant["id"]
+    return None
+
+
 def configure_inbound_number(
     api_key: str,
     phone_number_id: str,
     assistant_config: dict,
-) -> dict:
+) -> str:
+    assistant_config["name"] = INBOUND_ASSISTANT_NAME
+
+    # Update existing or create new saved assistant
+    assistant_id = _find_inbound_assistant(api_key)
+    if assistant_id:
+        response = requests.patch(
+            f"{VAPI_ASSISTANT_URL}/{assistant_id}",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=assistant_config,
+        )
+    else:
+        response = requests.post(
+            VAPI_ASSISTANT_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=assistant_config,
+        )
+    if not response.ok:
+        print(f"VAPI error {response.status_code}: {response.text}")
+    response.raise_for_status()
+    assistant_id = response.json()["id"]
+
+    # Link assistant to phone number
     response = requests.patch(
         f"{VAPI_PHONE_NUMBER_URL}/{phone_number_id}",
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
-        json={
-            "assistantId": None,
-            "assistant": assistant_config,
-        },
+        json={"assistantId": assistant_id},
     )
     if not response.ok:
         print(f"VAPI error {response.status_code}: {response.text}")
     response.raise_for_status()
-    return response.json()
+    return assistant_id
 
 
 def clear_inbound_number(
     api_key: str,
     phone_number_id: str,
-) -> dict:
-    response = requests.patch(
+) -> None:
+    requests.patch(
         f"{VAPI_PHONE_NUMBER_URL}/{phone_number_id}",
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
-        json={
-            "assistantId": None,
-            "assistant": None,
-        },
+        json={"assistantId": None},
     )
-    response.raise_for_status()
-    return response.json()
 
 
 def create_call(
