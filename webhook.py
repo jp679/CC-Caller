@@ -47,6 +47,7 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     cursor: pointer; margin: 10px; }}
   #connect {{ background: #22c55e; color: white; }}
   #end {{ background: #ef4444; color: white; display: none; }}
+  #vapi-support-btn, .vapi-btn {{ display: none !important; }}
 </style>
 </head><body>
 <h1>CC-Caller</h1>
@@ -79,8 +80,13 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
       vapiInstance = window.vapiSDK.run({{
         apiKey: PUBLIC_KEY,
         assistant: ASSISTANT_CONFIG,
-        config: {{ hide: true }}
+        config: {{ hide: true, position: 'none' }}
       }});
+      // Hide VAPI's built-in widget button
+      setTimeout(function() {{
+        var btn = document.getElementById('vapi-support-btn');
+        if (btn) btn.style.display = 'none';
+      }}, 500);
       document.getElementById('status').textContent = 'Connected — speak now';
       document.getElementById('status').className = '';
       document.getElementById('end').style.display = 'inline-block';
