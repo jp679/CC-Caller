@@ -65,41 +65,59 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
 
   let vapi = null;
 
+  async function freshCall() {{
+    // Fetch latest assistant config from server (may have changed between calls)
+    let config = ASSISTANT_CONFIG;
+    try {{
+      const resp = await fetch('/call-config');
+      if (resp.ok) {{
+        const data = await resp.json();
+        if (data.assistantConfig) config = data.assistantConfig;
+      }}
+    }} catch(e) {{}}
+
+    // Destroy previous instance if any
+    if (vapi) {{
+      try {{ vapi.stop(); }} catch(e) {{}}
+      vapi = null;
+    }}
+
+    vapi = new Vapi(PUBLIC_KEY);
+
+    vapi.on('call-start', () => {{
+      document.getElementById('status').textContent = 'Connected — speak now';
+      document.getElementById('status').className = '';
+      document.getElementById('end').style.display = 'inline-block';
+    }});
+
+    vapi.on('call-end', () => {{
+      document.getElementById('status').textContent = 'Call ended — tap Connect for a new call';
+      document.getElementById('status').className = '';
+      document.getElementById('end').style.display = 'none';
+      document.getElementById('connect').style.display = 'inline-block';
+      vapi = null;
+    }});
+
+    vapi.on('message', (msg) => {{
+      if (msg.type === 'transcript' && msg.transcriptType === 'final') {{
+        log(msg.role + ': ' + msg.transcript);
+      }}
+    }});
+
+    vapi.on('error', (e) => {{
+      log('Error: ' + JSON.stringify(e));
+    }});
+
+    await vapi.start(config);
+  }}
+
   document.getElementById('connect').onclick = async function() {{
     document.getElementById('status').textContent = 'Connecting...';
     document.getElementById('status').className = 'pulse';
     document.getElementById('connect').style.display = 'none';
 
     try {{
-      vapi = new Vapi(PUBLIC_KEY);
-
-      vapi.on('call-start', () => {{
-        document.getElementById('status').textContent = 'Connected — speak now';
-        document.getElementById('status').className = '';
-        document.getElementById('end').style.display = 'inline-block';
-      }});
-
-      vapi.on('call-end', () => {{
-        document.getElementById('status').textContent = 'Call ended';
-        document.getElementById('status').className = '';
-        document.getElementById('end').style.display = 'none';
-        document.getElementById('connect').style.display = 'inline-block';
-      }});
-
-      vapi.on('message', (msg) => {{
-        if (msg.type === 'transcript' && msg.transcriptType === 'final') {{
-          log(msg.role + ': ' + msg.transcript);
-        }}
-      }});
-
-      vapi.on('error', (e) => {{
-        log('Error: ' + JSON.stringify(e));
-        document.getElementById('status').textContent = 'Error — check log';
-        document.getElementById('status').className = '';
-        document.getElementById('connect').style.display = 'inline-block';
-      }});
-
-      await vapi.start(ASSISTANT_CONFIG);
+      await freshCall();
     }} catch(e) {{
       log('Failed: ' + e.message);
       document.getElementById('status').textContent = 'Failed to connect';
