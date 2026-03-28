@@ -14,16 +14,19 @@ from dotenv import load_dotenv
 from pyngrok import ngrok
 
 from summarizer import summarize_output
+import requests as http_requests
 from vapi_client import (
     build_assistant_config,
     build_inbound_assistant_config,
     configure_inbound_number,
     clear_inbound_number,
     create_call,
+    create_web_call,
 )
 from webhook import create_app
 
-load_dotenv()
+import pathlib
+load_dotenv(pathlib.Path(__file__).parent / ".env")
 
 
 class CallMode(Enum):
@@ -90,6 +93,23 @@ def should_call(
     return True
 
 
+def send_notification(title: str, message: str, url: str = "") -> None:
+    ntfy_topic = os.getenv("NTFY_TOPIC", "cc-caller")
+    headers = {"Title": title}
+    if url:
+        headers["Click"] = url
+        headers["Actions"] = f"view, Open Call, {url}"
+    try:
+        http_requests.post(
+            f"https://ntfy.sh/{ntfy_topic}",
+            data=message,
+            headers=headers,
+            timeout=5,
+        )
+    except Exception as e:
+        print(f"Notification failed: {e}")
+
+
 def is_termination(transcript: str) -> bool:
     result = subprocess.run(
         ["claude", "-p", TERMINATION_CHECK_PROMPT],
@@ -105,6 +125,7 @@ def main():
     parser.add_argument("instruction", nargs="?", default=None, help="Initial instruction for Claude (omit for inbound mode)")
     parser.add_argument("--mode", choices=["always", "on-need", "interval"], default="always")
     parser.add_argument("--inbound", action="store_true", help="Wait for an inbound call instead of starting with an instruction")
+    parser.add_argument("--web", action="store_true", help="Use web-based voice calls instead of phone (free, no Twilio needed)")
     parser.add_argument("--interval-minutes", type=int, default=15)
     parser.add_argument("--port", type=int, default=int(os.getenv("WEBHOOK_PORT", "8765")))
     args = parser.parse_args()
@@ -172,31 +193,56 @@ def main():
             print("Summarizing for voice call...")
             summary_data = summarize_output(output)
 
-            print(f"Calling {customer_number}...")
             assistant_config = build_assistant_config(
                 summary=summary_data["summary"],
                 detail=summary_data["detail"],
                 webhook_url=webhook_url,
             )
-            create_call(
-                api_key=api_key,
-                phone_number_id=phone_number_id,
-                customer_number=customer_number,
-                assistant_config=assistant_config,
-            )
-            last_call_time = time.time()
 
-            print("Waiting for your response...")
-            try:
-                transcript = transcript_queue.get(timeout=600)
-            except queue.Empty:
-                print("No response after 10 minutes. Retrying call once...")
+            if args.web:
+                print("Creating web call...")
+                web_call = create_web_call(
+                    api_key=api_key,
+                    assistant_config=assistant_config,
+                )
+                web_call["publicKey"] = os.getenv("VAPI_PUBLIC_KEY", "")
+                with app.state.web_call_lock:
+                    app.state.pending_web_call = web_call
+                call_url = f"{public_url}/call"
+                print(f"Web call ready at {call_url}")
+                send_notification(
+                    title="CC-Caller Update",
+                    message=summary_data["summary"][:200],
+                    url=call_url,
+                )
+            else:
+                print(f"Calling {customer_number}...")
                 create_call(
                     api_key=api_key,
                     phone_number_id=phone_number_id,
                     customer_number=customer_number,
                     assistant_config=assistant_config,
                 )
+            last_call_time = time.time()
+
+            print("Waiting for your response...")
+            try:
+                transcript = transcript_queue.get(timeout=600)
+            except queue.Empty:
+                print("No response after 10 minutes. Retrying...")
+                if args.web:
+                    send_notification(
+                        title="CC-Caller: Still waiting",
+                        message="Tap to connect",
+                        url=f"{public_url}/call",
+                    )
+                else:
+                    create_call(
+                        api_key=api_key,
+                        phone_number_id=phone_number_id,
+                        customer_number=customer_number,
+                        assistant_config=assistant_config,
+                    )
                 try:
                     transcript = transcript_queue.get(timeout=600)
                 except queue.Empty:

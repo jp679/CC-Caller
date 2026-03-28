@@ -1,0 +1,4 @@
+#!/bin/bash
+# CC-Caller: Voice-driven Claude Code feedback loop
+# Loads .env from CC-Caller home, but Claude runs in your current directory
+PYTHONPATH="/Users/JP_1/Dev/CC-Caller:$PYTHONPATH" python3 /Users/JP_1/Dev/CC-Caller/cc_caller.py "$@"

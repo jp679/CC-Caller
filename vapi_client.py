@@ -3,6 +3,7 @@ from typing import Optional
 import requests
 
 VAPI_CALL_URL = "https://api.vapi.ai/call"
+VAPI_WEB_CALL_URL = "https://api.vapi.ai/call/web"
 VAPI_PHONE_NUMBER_URL = "https://api.vapi.ai/phone-number"
 DETAIL_MAX_CHARS = 10000
 
@@ -13,7 +14,8 @@ INBOUND_SYSTEM_PROMPT = (
     "2) Listen to their task description.\n"
     "3) Confirm what you heard back to them in one sentence.\n"
     "4) Say 'Got it, starting now.' then use the endCall tool to hang up.\n"
-    "Keep it short and natural. No filler."
+    "Keep it short and natural. No filler.\n"
+    "IMPORTANT: Always respond in the same language the user is speaking. If they speak Spanish, respond in Spanish. If they switch languages, switch with them."
 )
 
 SYSTEM_PROMPT_TEMPLATE = (
@@ -26,7 +28,8 @@ SYSTEM_PROMPT_TEMPLATE = (
     "- After collecting instructions, ask: 'Should I keep working and call you back, or are we done for now?'\n"
     "- If they want to continue, say 'On it, I'll call back when done.' then use the endCall tool to hang up.\n"
     "- If they want to stop, say 'Got it, ending session.' then use the endCall tool to hang up.\n"
-    "Do NOT answer coding questions yourself. Keep responses short. No filler.\n\n"
+    "Do NOT answer coding questions yourself. Keep responses short. No filler.\n"
+    "IMPORTANT: Always respond in the same language the user is speaking. If they speak Spanish, respond in Spanish. If they switch languages, switch with them.\n\n"
     "SUMMARY:\n{summary}\n\n"
     "DETAIL:\n{detail}"
 )
@@ -43,6 +46,11 @@ def build_assistant_config(
     )
 
     return {
+        "transcriber": {
+            "provider": "deepgram",
+            "model": "nova-2",
+            "language": "multi",
+        },
         "model": {
             "provider": "anthropic",
             "model": "claude-sonnet-4-6",
@@ -57,6 +65,7 @@ def build_assistant_config(
         "voice": {
             "provider": "11labs",
             "voiceId": "21m00Tcm4TlvDq8ikWAM",
+            "model": "eleven_multilingual_v2",
             "speed": 1.2,
         },
         "endCallPhrases": ["go ahead", "that's all", "stop", "we're done"],
@@ -72,6 +81,11 @@ def build_assistant_config(
 
 def build_inbound_assistant_config(webhook_url: str) -> dict:
     return {
+        "transcriber": {
+            "provider": "deepgram",
+            "model": "nova-2",
+            "language": "multi",
+        },
         "model": {
             "provider": "anthropic",
             "model": "claude-sonnet-4-6",
@@ -86,6 +100,7 @@ def build_inbound_assistant_config(webhook_url: str) -> dict:
         "voice": {
             "provider": "11labs",
             "voiceId": "21m00Tcm4TlvDq8ikWAM",
+            "model": "eleven_multilingual_v2",
             "speed": 1.2,
         },
         "stopSpeakingPlan": {
@@ -173,6 +188,26 @@ def clear_inbound_number(
         },
         json={"assistantId": None},
     )
+
+
+def create_web_call(
+    api_key: str,
+    assistant_config: dict,
+) -> dict:
+    response = requests.post(
+        VAPI_WEB_CALL_URL,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "assistant": assistant_config,
+        },
+    )
+    if not response.ok:
+        print(f"VAPI error {response.status_code}: {response.text}")
+    response.raise_for_status()
+    return response.json()
 
 
 def create_call(

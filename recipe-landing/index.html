@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Herb-Crusted Grilled Chicken — The Kitchen Edit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --ink: #1a1714;
+      --cream: #f5f0e8;
+      --warm: #e8dfd3;
+      --terracotta: #c4603a;
+      --sage: #7a8c6e;
+      --gold: #b8963e;
+      --muted: #8a8279;
+      --ff-display: 'Playfair Display', Georgia, serif;
+      --ff-body: 'DM Sans', sans-serif;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--ff-body);
+      background: var(--cream);
+      color: var(--ink);
+      line-height: 1.65;
+      font-weight: 300;
+      overflow-x: hidden;
+    }
+
+    /* ── NAV ── */
+    header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 1.25rem 3rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(245, 240, 232, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(26, 23, 20, 0.06);
+      transition: padding 0.4s ease;
+    }
+
+    header.scrolled { padding: 0.8rem 3rem; }
+
+    .logo {
+      font-family: var(--ff-display);
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--ink);
+      text-decoration: none;
+    }
+
+    .logo span { color: var(--terracotta); }
+
+    nav a {
+      font-size: 0.8rem;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      text-decoration: none;
+      color: var(--muted);
+      margin-left: 2.5rem;
+      position: relative;
+      transition: color 0.3s;
+    }
+
+    nav a::after {
+      content: '';
+      position: absolute;
+      bottom: -4px;
+      left: 0;
+      width: 0;
+      height: 1.5px;
+      background: var(--terracotta);
+      transition: width 0.3s ease;
+    }
+
+    nav a:hover { color: var(--ink); }
+    nav a:hover::after { width: 100%; }
+
+    /* ── HERO ── */
+    .hero {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      align-items: center;
+      padding: 8rem 3rem 4rem;
+      gap: 4rem;
+      position: relative;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -80px;
+      right: -120px;
+      width: 500px;
+      height: 500px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(196, 96, 58, 0.08) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero-text { max-width: 560px; }
+
+    .hero-tag {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--terracotta);
+      border: 1px solid var(--terracotta);
+      padding: 0.35rem 1rem;
+      margin-bottom: 2rem;
+      animation: fadeUp 0.8s ease both;
+    }
+
+    .hero h1 {
+      font-family: var(--ff-display);
+      font-size: clamp(2.8rem, 5.5vw, 4.5rem);
+      font-weight: 400;
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+      margin-bottom: 1.5rem;
+      animation: fadeUp 0.8s 0.15s ease both;
+    }
+
+    .hero h1 em {
+      font-style: italic;
+      color: var(--terracotta);
+    }
+
+    .hero-desc {
+      font-size: 1.05rem;
+      color: var(--muted);
+      max-width: 420px;
+      margin-bottom: 2.5rem;
+      animation: fadeUp 0.8s 0.3s ease both;
+    }
+
+    .hero-meta {
+      display: flex;
+      gap: 2.5rem;
+      animation: fadeUp 0.8s 0.45s ease both;
+    }
+
+    .hero-meta dt {
+      font-size: 0.65rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.3rem;
+    }
+
+    .hero-meta dd {
+      font-family: var(--ff-display);
+      font-size: 1.2rem;
+      font-weight: 700;
+    }
+
+    .hero-image {
+      position: relative;
+      justify-self: center;
+      animation: fadeUp 1s 0.2s ease both;
+    }
+
+    .hero-image-frame {
+      width: min(420px, 100%);
+      aspect-ratio: 3 / 4;
+      background: var(--warm);
+      border-radius: 240px 240px 20px 20px;
+      overflow: hidden;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .hero-image-frame .placeholder-icon {
+      font-size: 5rem;
+      opacity: 0.3;
+    }
+
+    .hero-image-frame::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border: 1px solid rgba(26, 23, 20, 0.08);
+      border-radius: inherit;
+      pointer-events: none;
+    }
+
+    .hero-image-accent {
+      position: absolute;
+      bottom: -20px;
+      left: -30px;
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      border: 2px solid var(--sage);
+      opacity: 0.3;
+    }
+
+    /* ── DIVIDER ── */
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+      padding: 0 3rem;
+      margin: 1rem 0;
+    }
+
+    .divider::before, .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: rgba(26, 23, 20, 0.1);
+    }
+
+    .divider span {
+      font-size: 0.65rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    /* ── RECIPE SECTION ── */
+    .recipe {
+      padding: 5rem 3rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .recipe-header {
+      text-align: center;
+      margin-bottom: 4rem;
+    }
+
+    .recipe-header h2 {
+      font-family: var(--ff-display);
+      font-size: clamp(2rem, 3.5vw, 2.8rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.75rem;
+    }
+
+    .recipe-header p {
+      color: var(--muted);
+      max-width: 480px;
+      margin: 0 auto;
+    }
+
+    .recipe-grid {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 4rem;
+      align-items: start;
+    }
+
+    /* Ingredients */
+    .ingredients {
+      position: sticky;
+      top: 100px;
+      background: var(--ink);
+      color: var(--cream);
+      border-radius: 20px;
+      padding: 2.5rem;
+    }
+
+    .ingredients h3 {
+      font-family: var(--ff-display);
+      font-size: 1.4rem;
+      font-weight: 400;
+      margin-bottom: 0.3rem;
+    }
+
+    .ingredients .serves {
+      font-size: 0.7rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 1.8rem;
+    }
+
+    .ingredients ul {
+      list-style: none;
+    }
+
+    .ingredients li {
+      padding: 0.7rem 0;
+      border-bottom: 1px solid rgba(245, 240, 232, 0.08);
+      font-size: 0.95rem;
+      font-weight: 300;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+
+    .ingredients li:last-child { border-bottom: none; }
+
+    .ingredients .amount {
+      font-family: var(--ff-display);
+      font-weight: 700;
+      font-size: 0.9rem;
+      color: var(--gold);
+      white-space: nowrap;
+      margin-left: 1rem;
+    }
+
+    /* Instructions */
+    .instructions h3 {
+      font-family: var(--ff-display);
+      font-size: 1.4rem;
+      font-weight: 400;
+      margin-bottom: 2.5rem;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 56px 1fr;
+      gap: 1.5rem;
+      margin-bottom: 2.5rem;
+      align-items: start;
+    }
+
+    .step-num {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      border: 1.5px solid var(--terracotta);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--ff-display);
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--terracotta);
+      flex-shrink: 0;
+    }
+
+    .step-body h4 {
+      font-family: var(--ff-display);
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    .step-body p {
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.75;
+    }
+
+    .step-body .tip {
+      margin-top: 0.75rem;
+      padding: 0.75rem 1rem;
+      background: rgba(122, 140, 110, 0.1);
+      border-left: 3px solid var(--sage);
+      border-radius: 0 8px 8px 0;
+      font-size: 0.85rem;
+      color: var(--sage);
+      font-weight: 400;
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      margin-top: 4rem;
+      padding: 3rem;
+      background: var(--ink);
+      color: rgba(245, 240, 232, 0.5);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.8rem;
+    }
+
+    footer .logo { color: var(--cream); }
+    footer .logo span { color: var(--terracotta); }
+
+    footer a {
+      color: rgba(245, 240, 232, 0.5);
+      text-decoration: none;
+      margin-left: 2rem;
+      transition: color 0.3s;
+    }
+
+    footer a:hover { color: var(--cream); }
+
+    /* ── ANIMATIONS ── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 900px) {
+      header { padding: 1rem 1.5rem; }
+      .hero {
+        grid-template-columns: 1fr;
+        padding: 7rem 1.5rem 3rem;
+        min-height: auto;
+        gap: 3rem;
+      }
+      .hero-image { order: -1; }
+      .hero-image-frame { width: min(320px, 100%); }
+      .recipe { padding: 3rem 1.5rem; }
+      .recipe-grid {
+        grid-template-columns: 1fr;
+        gap: 2.5rem;
+      }
+      .ingredients {
+        position: static;
+      }
+      footer {
+        flex-direction: column;
+        gap: 1rem;
+        text-align: center;
+        padding: 2rem 1.5rem;
+      }
+      footer a { margin-left: 0; margin: 0 1rem; }
+      nav a { margin-left: 1.5rem; font-size: 0.7rem; }
+    }
+
+    @media (max-width: 500px) {
+      nav { display: none; }
+      .hero-meta { flex-wrap: wrap; gap: 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── HEADER ── -->
+  <header id="site-header">
+    <a href="#" class="logo">the kitchen <span>edit</span></a>
+    <nav>
+      <a href="#recipe">Recipe</a>
+      <a href="#steps">Method</a>
+    </nav>
+  </header>
+
+  <!-- ── HERO ── -->
+  <section class="hero">
+    <div class="hero-text">
+      <span class="hero-tag">Weeknight Essential</span>
+      <h1>Herb-Crusted <em>Grilled Chicken</em></h1>
+      <p class="hero-desc">
+        Golden char lines, a shatteringly crisp herb crust, and impossibly juicy meat
+        underneath. A proper brine and a screaming-hot grill turn chicken into something
+        you'll crave all week.
+      </p>
+      <dl class="hero-meta">
+        <div>
+          <dt>Prep</dt>
+          <dd>15 min</dd>
+        </div>
+        <div>
+          <dt>Cook</dt>
+          <dd>25 min</dd>
+        </div>
+        <div>
+          <dt>Serves</dt>
+          <dd>4</dd>
+        </div>
+        <div>
+          <dt>Difficulty</dt>
+          <dd>Easy</dd>
+        </div>
+      </dl>
+    </div>
+    <div class="hero-image">
+      <div class="hero-image-frame">
+        <span class="placeholder-icon">&#127831;</span>
+      </div>
+      <div class="hero-image-accent"></div>
+    </div>
+  </section>
+
+  <div class="divider"><span>the recipe</span></div>
+
+  <!-- ── RECIPE ── -->
+  <section class="recipe" id="recipe">
+    <div class="recipe-header">
+      <h2>Ingredients &amp; Method</h2>
+      <p>Great grilled chicken starts before it hits the grate — a quick brine, a punchy herb paste, and the confidence to leave it alone while it cooks.</p>
+    </div>
+
+    <div class="recipe-grid">
+      <!-- Ingredients Panel -->
+      <aside class="ingredients">
+        <h3>Ingredients</h3>
+        <p class="serves">Serves 4</p>
+        <ul>
+          <li>Bone-in, skin-on chicken thighs <span class="amount">8 pieces</span></li>
+          <li>Fresh rosemary, chopped <span class="amount">2 tbsp</span></li>
+          <li>Fresh thyme leaves <span class="amount">1 tbsp</span></li>
+          <li>Garlic cloves, minced <span class="amount">4 large</span></li>
+          <li>Extra virgin olive oil <span class="amount">3 tbsp</span></li>
+          <li>Lemon, zested and juiced <span class="amount">1 large</span></li>
+          <li>Smoked paprika <span class="amount">1 tsp</span></li>
+          <li>Dijon mustard <span class="amount">1 tbsp</span></li>
+          <li>Kosher salt <span class="amount">1 tbsp</span></li>
+          <li>Black pepper, freshly cracked <span class="amount">generous</span></li>
+        </ul>
+      </aside>
+
+      <!-- Instructions -->
+      <div class="instructions" id="steps">
+        <h3>Method</h3>
+
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <h4>Make the Herb Paste</h4>
+            <p>Combine the rosemary, thyme, minced garlic, olive oil, lemon zest, smoked paprika, and Dijon mustard in a small bowl. Mix into a thick, fragrant paste. Season with salt and pepper.</p>
+            <div class="tip">Chef's tip: A mortar and pestle gives you a rougher, more rustic paste that adheres better to the skin than a food processor would.</div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <h4>Season the Chicken</h4>
+            <p>Pat the chicken thighs completely dry with paper towels — this is non-negotiable for crisp skin. Loosen the skin gently and spread half the herb paste directly onto the meat underneath. Rub the remaining paste over the skin. Let it sit at room temperature for 30 minutes, or refrigerate uncovered for up to 4 hours.</p>
+            <div class="tip">Chef's tip: Drying the skin and leaving it uncovered in the fridge creates a pellicle — a tacky surface that chars beautifully on the grill.</div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <h4>Prepare the Grill</h4>
+            <p>Set up a two-zone fire: one side screaming hot for direct heat, the other side with no coals or burners off for indirect. Clean and oil the grates thoroughly. You want to hear an aggressive sizzle the moment the chicken hits the grill.</p>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <h4>Grill to Perfection</h4>
+            <p>Place the thighs skin-side down over direct heat. Do not touch them for 5–6 minutes — let the grill do its work until the skin is deeply golden and releases easily. Flip and sear the other side for 2 minutes, then move every piece to the indirect zone. Close the lid and cook for another 12–15 minutes until the internal temperature hits 74°C (165°F).</p>
+            <div class="tip">Chef's tip: Resist the urge to press or move the chicken. Every time you fidget, you lose heat and break the crust. Patience is the secret weapon.</div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num">5</div>
+          <div class="step-body">
+            <h4>Rest and Serve</h4>
+            <p>Transfer the chicken to a cutting board and rest for 5 minutes — the juices need time to redistribute. Squeeze fresh lemon juice over the top, scatter with a few torn herb leaves, and serve alongside charred lemon halves. This chicken speaks for itself.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── FOOTER ── -->
+  <footer>
+    <a href="#" class="logo">the kitchen <span>edit</span></a>
+    <div>
+      <span>&copy; 2026 The Kitchen Edit</span>
+      <a href="#">About</a>
+      <a href="#">Contact</a>
+    </div>
+  </footer>
+
+  <script>
+    // Shrink header on scroll
+    const header = document.getElementById('site-header');
+    window.addEventListener('scroll', () => {
+      header.classList.toggle('scrolled', window.scrollY > 60);
+    });
+  </script>
+
+</body>
+</html>
