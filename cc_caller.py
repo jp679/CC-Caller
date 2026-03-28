@@ -135,8 +135,12 @@ def main():
 
     mode = CallMode(args.mode)
     api_key = os.environ["VAPI_API_KEY"]
+    public_key = os.getenv("VAPI_PUBLIC_KEY", "")
     phone_number_id = os.environ["VAPI_PHONE_NUMBER_ID"]
     customer_number = os.environ["USER_PHONE_NUMBER"]
+
+    if args.web and not public_key:
+        parser.error("--web requires VAPI_PUBLIC_KEY in .env")
 
     # Start webhook server
     transcript_queue = queue.Queue()
@@ -200,14 +204,12 @@ def main():
             )
 
             if args.web:
-                print("Creating web call...")
-                web_call = create_web_call(
-                    api_key=api_key,
-                    assistant_config=assistant_config,
-                )
-                web_call["publicKey"] = os.getenv("VAPI_PUBLIC_KEY", "")
+                print("Preparing web call...")
                 with app.state.web_call_lock:
-                    app.state.pending_web_call = web_call
+                    app.state.pending_web_call = {
+                        "assistantConfig": assistant_config,
+                        "publicKey": public_key,
+                    }
                 call_url = f"{public_url}/call"
                 print(f"Web call ready at {call_url}")
                 send_notification(

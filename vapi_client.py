@@ -191,13 +191,13 @@ def clear_inbound_number(
 
 
 def create_web_call(
-    api_key: str,
+    public_key: str,
     assistant_config: dict,
 ) -> dict:
     response = requests.post(
         VAPI_WEB_CALL_URL,
         headers={
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {public_key}",
             "Content-Type": "application/json",
         },
         json={
