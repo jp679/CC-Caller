@@ -31,7 +31,13 @@ NEED_INPUT_PROMPT = (
     "does this require user input, a decision, or clarification to continue?"
 )
 
-TERMINATION_PHRASES = {"stop", "we're done"}
+TERMINATION_CHECK_PROMPT = (
+    "Read this transcript from a phone call and answer with ONLY 'YES' or 'NO': "
+    "is the user signaling they want to END the session and stop receiving calls? "
+    "Examples of YES: 'stop', 'we're done', 'that's it for today', 'I'm finished', "
+    "'stop calling', 'end session', 'the task is finished'. "
+    "Examples of NO: 'go ahead', 'continue', 'work on X next', 'sounds good'."
+)
 
 
 def run_claude(instruction: str, session_id: Optional[str]) -> Tuple[str, str]:
@@ -79,8 +85,13 @@ def should_call(
 
 
 def is_termination(transcript: str) -> bool:
-    lower = transcript.strip().lower()
-    return any(phrase in lower for phrase in TERMINATION_PHRASES)
+    result = subprocess.run(
+        ["claude", "-p", TERMINATION_CHECK_PROMPT],
+        input=transcript,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip().upper().startswith("YES")
 
 
 def main():
@@ -103,7 +114,7 @@ def main():
     server_thread = threading.Thread(
         target=uvicorn.run,
         args=(app,),
-        kwargs={"host": "0.0.0.0", "port": args.port, "log_level": "warning"},
+        kwargs={"host": "0.0.0.0", "port": args.port, "log_level": "info"},
         daemon=True,
     )
     server_thread.start()

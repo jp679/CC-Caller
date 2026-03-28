@@ -5,9 +5,14 @@ from fastapi import FastAPI, Request
 def create_app(transcript_queue: queue.Queue) -> FastAPI:
     app = FastAPI()
 
+    @app.get("/webhook")
+    async def webhook_health():
+        return {"status": "healthy"}
+
     @app.post("/webhook")
     async def webhook(request: Request):
         body = await request.json()
+        print(f"[webhook] Received event: {body.get('message', {}).get('type', 'unknown')}")
         message = body.get("message", {})
 
         if message.get("type") != "end-of-call-report":

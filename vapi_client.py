@@ -4,14 +4,17 @@ VAPI_CALL_URL = "https://api.vapi.ai/call"
 DETAIL_MAX_CHARS = 10000
 
 SYSTEM_PROMPT_TEMPLATE = (
-    "You are a voice relay for a coding assistant. Your job:\n"
-    "1) Read the summary to the user.\n"
-    "2) If they ask for more detail, provide it from the DETAIL section below.\n"
-    "3) Collect any instructions they give.\n"
-    "4) When they say 'go ahead', 'that's all', or hang up, "
-    "say 'On it, I'll call back when done.' and end the call.\n"
-    "Do NOT attempt to answer coding questions yourself. "
-    "Stay concise and natural.\n\n"
+    "You are a voice relay for a coding assistant.\n"
+    "After your greeting, read the SUMMARY below. The user can interrupt you at any time.\n"
+    "Rules:\n"
+    "- Read ONLY the summary. Do NOT read the detail unless the user asks.\n"
+    "- If they ask for more detail, read from the DETAIL section.\n"
+    "- Collect any instructions they give.\n"
+    "- After collecting instructions, ask: 'Should I keep working and call you back, or are we done for now?'\n"
+    "- If they want to continue, say 'On it, I'll call back when done.' then use the endCall tool to hang up.\n"
+    "- If they want to stop, say 'Got it, ending session.' then use the endCall tool to hang up.\n"
+    "Do NOT answer coding questions yourself. Keep responses short. No filler.\n\n"
+    "SUMMARY:\n{summary}\n\n"
     "DETAIL:\n{detail}"
 )
 
@@ -22,22 +25,34 @@ def build_assistant_config(
     webhook_url: str,
 ) -> dict:
     truncated_detail = detail[:DETAIL_MAX_CHARS]
-    system_content = SYSTEM_PROMPT_TEMPLATE.format(detail=truncated_detail)
+    system_content = SYSTEM_PROMPT_TEMPLATE.format(
+        summary=summary, detail=truncated_detail
+    )
 
     return {
         "model": {
             "provider": "anthropic",
-            "model": "claude-sonnet-4-5-20250514",
+            "model": "claude-sonnet-4-6",
             "messages": [
                 {"role": "system", "content": system_content}
             ],
+            "tools": [
+                {"type": "endCall"}
+            ],
         },
-        "firstMessage": summary,
+        "firstMessage": "Hey, got an update for you.",
         "voice": {
             "provider": "11labs",
             "voiceId": "21m00Tcm4TlvDq8ikWAM",
+            "speed": 1.2,
         },
         "endCallPhrases": ["go ahead", "that's all", "stop", "we're done"],
+        "stopSpeakingPlan": {
+            "numWords": 0,
+            "voiceSeconds": 0.2,
+            "backoffSeconds": 1,
+        },
+        "backgroundSound": "off",
         "serverUrl": webhook_url,
     }
 
@@ -60,5 +75,7 @@ def create_call(
             "assistant": assistant_config,
         },
     )
+    if not response.ok:
+        print(f"VAPI error {response.status_code}: {response.text}")
     response.raise_for_status()
     return response.json()
