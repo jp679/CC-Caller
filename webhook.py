@@ -25,19 +25,17 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
         with app.state.web_call_lock:
             web_call = app.state.pending_web_call
         if not web_call:
-            return {"error": "no pending call"}
-        return web_call
+            return {"ready": False}
+        return {**web_call, "ready": True}
 
     @app.get("/call", response_class=HTMLResponse)
     async def web_call_page():
         with app.state.web_call_lock:
             web_call = app.state.pending_web_call
-        if not web_call:
-            return HTMLResponse("<h1>No pending call</h1>", status_code=404)
 
         import json
-        assistant_json = json.dumps(web_call.get("assistantConfig", {}))
-        public_key = web_call.get("publicKey", "")
+        assistant_json = json.dumps(web_call.get("assistantConfig", {})) if web_call else "null"
+        public_key = web_call.get("publicKey", "") if web_call else ""
 
         return HTMLResponse(f"""<!DOCTYPE html>
 <html><head>
@@ -53,13 +51,17 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
   button {{ padding: 16px 32px; font-size: 1.2em; border: none; border-radius: 12px;
     cursor: pointer; margin: 10px; }}
   #connect {{ background: #22c55e; color: white; }}
+  #connect:disabled {{ background: #555; cursor: not-allowed; }}
   #end {{ background: #ef4444; color: white; display: none; }}
+  #banner {{ display: none; background: #22c55e; color: white; padding: 12px 24px;
+    border-radius: 12px; margin: 10px; font-size: 1.1em; animation: pulse 2s infinite; }}
   #vapi-support-btn, .vapi-btn {{ display: none !important; }}
 </style>
 </head><body>
 <h1>CC-Caller</h1>
-<p id="status">Tap Connect to start the voice call</p>
-<button id="connect">Connect</button>
+<div id="banner">Update ready — tap Connect</div>
+<p id="status">Waiting for Claude to finish...</p>
+<button id="connect" disabled>Connect</button>
 <button id="end">End Call</button>
 <div id="log" style="margin-top:20px;font-size:0.9em;opacity:0.7;max-width:90vw;text-align:center"></div>
 
@@ -71,17 +73,47 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
   const Vapi = VapiModule.default || VapiModule;
 
   let vapi = null;
+  let callReady = {assistant_json} !== null;
 
-  async function freshCall() {{
-    // Fetch latest assistant config from server (may have changed between calls)
-    let config = ASSISTANT_CONFIG;
+  // Poll for updates every 3 seconds
+  setInterval(async () => {{
+    if (vapi) return; // don't poll during a call
     try {{
       const resp = await fetch('/call-config');
       if (resp.ok) {{
         const data = await resp.json();
-        if (data.assistantConfig) config = data.assistantConfig;
+        if (data.ready) {{
+          callReady = true;
+          document.getElementById('banner').style.display = 'block';
+          document.getElementById('connect').disabled = false;
+          document.getElementById('status').textContent = 'Update ready — tap Connect';
+        }} else {{
+          callReady = false;
+          document.getElementById('banner').style.display = 'none';
+          document.getElementById('connect').disabled = true;
+          document.getElementById('status').textContent = 'Waiting for Claude to finish...';
+        }}
       }}
     }} catch(e) {{}}
+  }}, 3000);
+
+  // Set initial state
+  if (callReady) {{
+    document.getElementById('banner').style.display = 'block';
+    document.getElementById('connect').disabled = false;
+    document.getElementById('status').textContent = 'Update ready — tap Connect';
+  }}
+
+  async function freshCall() {{
+    let config = null;
+    try {{
+      const resp = await fetch('/call-config');
+      if (resp.ok) {{
+        const data = await resp.json();
+        if (data.ready && data.assistantConfig) config = data.assistantConfig;
+      }}
+    }} catch(e) {{}}
+    if (!config) config = ASSISTANT_CONFIG;
 
     // Destroy previous instance if any
     if (vapi) {{
@@ -122,6 +154,7 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     document.getElementById('status').textContent = 'Connecting...';
     document.getElementById('status').className = 'pulse';
     document.getElementById('connect').style.display = 'none';
+    document.getElementById('banner').style.display = 'none';
 
     try {{
       await freshCall();
