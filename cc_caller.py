@@ -163,7 +163,34 @@ def main():
     instruction = args.instruction
     last_call_time = 0.0
 
-    if args.inbound:
+    if args.inbound and args.web:
+        print("\n--- Web inbound mode ---")
+        inbound_config = build_inbound_assistant_config(webhook_url)
+        with app.state.web_call_lock:
+            app.state.pending_web_call = {
+                "assistantConfig": inbound_config,
+                "publicKey": public_key,
+            }
+        call_url = f"{public_url}/call"
+        print(f"Open {call_url} to start a task")
+        send_notification(
+            title="CC-Caller Ready",
+            message="Tap to connect and give your task",
+            url=call_url,
+        )
+        try:
+            instruction = transcript_queue.get()
+        except KeyboardInterrupt:
+            print("\nInterrupted while waiting. Exiting.")
+            ngrok.disconnect(public_url)
+            return
+        print(f"You said: {instruction}")
+        if is_termination(instruction):
+            print("Termination signal received. Exiting.")
+            ngrok.disconnect(public_url)
+            return
+
+    elif args.inbound:
         print("\n--- Inbound mode: configuring phone number ---")
         inbound_config = build_inbound_assistant_config(webhook_url)
         configure_inbound_number(api_key, phone_number_id, inbound_config)
