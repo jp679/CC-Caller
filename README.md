@@ -30,9 +30,21 @@ For push notifications, install [ntfy](https://ntfy.sh) on your phone and subscr
 
 ## Usage
 
-### Web mode (free, recommended)
+### Gemini Live mode (cheapest, recommended)
 
-No Twilio costs. Uses browser-based voice calls + push notifications.
+Direct audio-to-audio via Gemini 3.1 Flash Live. No VAPI, no Twilio. Just a Google AI API key.
+
+```bash
+# You give the task upfront, Claude calls you back via Gemini voice
+cc-caller --mode always --gemini "Refactor the auth module"
+
+# You initiate — tap the notification to speak your task
+cc-caller --mode always --gemini --inbound
+```
+
+### VAPI Web mode
+
+Browser-based voice calls via VAPI Web SDK + push notifications.
 
 ```bash
 # You give the task upfront, Claude calls you back via web

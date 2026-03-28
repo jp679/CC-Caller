@@ -150,7 +150,8 @@ def main():
     parser.add_argument("instruction", nargs="?", default=None, help="Initial instruction for Claude (omit for inbound mode)")
     parser.add_argument("--mode", choices=["always", "on-need", "interval"], default="always")
     parser.add_argument("--inbound", action="store_true", help="Wait for an inbound call instead of starting with an instruction")
-    parser.add_argument("--web", action="store_true", help="Use web-based voice calls instead of phone (free, no Twilio needed)")
+    parser.add_argument("--web", action="store_true", help="Use VAPI web-based voice calls instead of phone")
+    parser.add_argument("--gemini", action="store_true", help="Use Gemini Live for voice (free, no VAPI needed)")
     parser.add_argument("--tunnel", choices=["cloudflare", "ngrok"], default="cloudflare", help="Tunnel provider (default: cloudflare, free)")
     parser.add_argument("--session-id", type=str, default="caller", help="Claude session ID (default: 'caller', persists across restarts)")
     parser.add_argument("--interval-minutes", type=int, default=15)
@@ -161,13 +162,18 @@ def main():
         parser.error("Either provide an instruction or use --inbound")
 
     mode = CallMode(args.mode)
-    api_key = os.environ["VAPI_API_KEY"]
+    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = os.getenv("VAPI_API_KEY", "")
     public_key = os.getenv("VAPI_PUBLIC_KEY", "")
-    phone_number_id = os.environ["VAPI_PHONE_NUMBER_ID"]
-    customer_number = os.environ["USER_PHONE_NUMBER"]
+    phone_number_id = os.getenv("VAPI_PHONE_NUMBER_ID", "")
+    customer_number = os.getenv("USER_PHONE_NUMBER", "")
 
+    if args.gemini and not gemini_key:
+        parser.error("--gemini requires GEMINI_API_KEY in .env")
     if args.web and not public_key:
         parser.error("--web requires VAPI_PUBLIC_KEY in .env")
+    if not args.gemini and not args.web and not api_key:
+        parser.error("Phone mode requires VAPI_API_KEY in .env")
 
     # Start webhook server
     transcript_queue = queue.Queue()
@@ -193,7 +199,43 @@ def main():
     if session_id:
         print(f"Resuming Claude session: {session_id}")
 
-    if args.inbound and args.web:
+    if args.inbound and args.gemini:
+        print("\n--- Gemini Live inbound mode ---")
+        gemini_system = (
+            "You are a task intake assistant for a coding agent.\n"
+            "The user is calling to give you a task. Your job:\n"
+            "1) Greet them briefly and ask what they'd like the coding assistant to work on.\n"
+            "2) Listen to their task description.\n"
+            "3) Confirm what you heard back to them in one sentence.\n"
+            "4) Say 'Got it, starting now.' and stop talking.\n"
+            "Keep it short and natural."
+        )
+        with app.state.web_call_lock:
+            app.state.pending_gemini_call = {
+                "systemPrompt": gemini_system,
+                "geminiKey": gemini_key,
+                "model": "gemini-3.1-flash-live-preview",
+            }
+        call_url = f"{public_url}/call-gemini"
+        print(f"Open {call_url} to start a task")
+        send_notification(
+            title="CC-Caller Ready",
+            message="Tap to connect and give your task",
+            url=call_url,
+        )
+        try:
+            instruction = transcript_queue.get()
+        except KeyboardInterrupt:
+            print("\nInterrupted while waiting. Exiting.")
+            cleanup_tunnel()
+            return
+        print(f"You said: {instruction}")
+        if is_termination(instruction):
+            print("Termination signal received. Exiting.")
+            cleanup_tunnel()
+            return
+
+    elif args.inbound and args.web:
         print("\n--- Web inbound mode ---")
         inbound_config = build_inbound_assistant_config(webhook_url)
         with app.state.web_call_lock:
@@ -262,7 +304,36 @@ def main():
                 webhook_url=webhook_url,
             )
 
-            if args.web:
+            if args.gemini:
+                gemini_system = (
+                    "You are a voice relay for a coding assistant.\n"
+                    "Read the SUMMARY below to the user. They can interrupt anytime.\n"
+                    "Rules:\n"
+                    "- Read ONLY the summary. Do NOT read the detail unless asked.\n"
+                    "- If they ask for more detail, read from the DETAIL section.\n"
+                    "- Collect any instructions they give.\n"
+                    "- After collecting instructions, ask: 'Should I keep working and call you back, or are we done?'\n"
+                    "- If they want to continue, say 'On it, I'll call back when done.' and stop talking.\n"
+                    "- If they want to stop, say 'Got it, ending session.' and stop talking.\n"
+                    "Do NOT answer coding questions yourself. Keep responses short.\n\n"
+                    f"SUMMARY:\n{summary_data['summary']}\n\n"
+                    f"DETAIL:\n{summary_data['detail']}"
+                )
+                print("Preparing Gemini call...")
+                with app.state.web_call_lock:
+                    app.state.pending_gemini_call = {
+                        "systemPrompt": gemini_system,
+                        "geminiKey": gemini_key,
+                        "model": "gemini-3.1-flash-live-preview",
+                    }
+                call_url = f"{public_url}/call-gemini"
+                print(f"Gemini call ready at {call_url}")
+                send_notification(
+                    title="CC-Caller Update",
+                    message=summary_data["summary"][:200],
+                    url=call_url,
+                )
+            elif args.web:
                 print("Preparing web call...")
                 with app.state.web_call_lock:
                     app.state.pending_web_call = {
@@ -291,7 +362,13 @@ def main():
                 transcript = transcript_queue.get(timeout=600)
             except queue.Empty:
                 print("No response after 10 minutes. Retrying...")
-                if args.web:
+                if args.gemini:
+                    send_notification(
+                        title="CC-Caller: Still waiting",
+                        message="Tap to connect",
+                        url=f"{public_url}/call-gemini",
+                    )
+                elif args.web:
                     send_notification(
                         title="CC-Caller: Still waiting",
                         message="Tap to connect",
