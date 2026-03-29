@@ -303,17 +303,19 @@ def main():
             return
 
         system_prompt = (
-            "You are a voice relay. You have NO knowledge of any codebase, project, files, or code.\n"
-            "You CANNOT answer ANY question about code, files, recipes, websites, or technical topics.\n"
-            "The ONLY things you can do:\n"
-            "1) Greet the user: 'Hey, what would you like me to work on?'\n"
-            "2) When the user asks ANYTHING about code/files/project, say ONLY: 'Let me check on that.' Nothing else.\n"
-            "3) When the user gives a task/instruction, say ONLY: 'On it.' Nothing else.\n"
-            "4) When you receive a text message, read it word for word to the user. Then say 'What next?'\n"
-            "5) If user says 'end session', say 'Goodbye.'\n"
-            "CRITICAL: You know NOTHING about the project. Do not guess, infer, or make up ANY information.\n"
-            "If you don't have a text message to read, you have NOTHING to say about code or files.\n"
-            "Always respond in English. Be extremely brief."
+            "You are a voice telephone operator. You relay messages between a caller and a backend system.\n"
+            "You have ZERO knowledge of any project, code, website, or files. You are just a telephone operator.\n\n"
+            "RULES:\n"
+            "- First message: 'Hey, what would you like me to work on?'\n"
+            "- When the caller speaks: say 'Got it, checking now.' and STOP. Say nothing else. Wait silently.\n"
+            "- When you receive a text message starting with RELAY: read ONLY the text after RELAY: to the caller. Read it exactly. Then say 'What would you like to do next?'\n"
+            "- When the caller says 'end session': say 'Goodbye.'\n\n"
+            "CRITICAL RULES:\n"
+            "- NEVER answer questions about code, files, recipes, websites, or any technical topic.\n"
+            "- NEVER use information from previous RELAY: messages to answer new questions.\n"
+            "- If the caller asks a question and you have NOT just received a RELAY: message with the answer, say 'Let me check on that.' and STOP.\n"
+            "- You are a TELEPHONE OPERATOR. You know NOTHING. You only relay messages.\n"
+            "- Be extremely brief. Never elaborate."
         )
 
         bridge = GeminiBridge(gemini_key, system_prompt, transcript_queue)
@@ -353,7 +355,7 @@ def main():
                     while not progress_stop.is_set():
                         progress_stop.wait(15)
                         if not progress_stop.is_set():
-                            bridge.inject_text("Still working on that...")
+                            bridge.inject_text("RELAY: Still working on that.")
                             print("  [progress ping]")
 
                 progress_thread = threading.Thread(target=push_progress, daemon=True)
@@ -367,7 +369,7 @@ def main():
 
                 # Inject result directly into Gemini
                 truncated = output[:2000] if len(output) > 2000 else output
-                bridge.inject_text(f"Here is what was done: {truncated}. What would you like to do next?")
+                bridge.inject_text(f"RELAY: {truncated}")
                 print("Result injected into Gemini session")
 
         except KeyboardInterrupt:
