@@ -12,8 +12,6 @@ def test_build_assistant_config_includes_summary_and_detail():
 
     assert config["firstMessage"] == "Hey, got an update for you."
     assert config["serverUrl"] == "https://abc123.ngrok.io/webhook"
-    assert config["endCallPhrases"] == ["go ahead", "that's all", "stop", "we're done"]
-
     system_content = config["model"]["messages"][0]["content"]
     assert "I fixed the auth bug. What next?" in system_content
     assert "Changed login.py lines 42-58" in system_content

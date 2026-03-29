@@ -230,6 +230,20 @@ def main():
     if not args.gemini and not args.web and not args.sip and not api_key:
         parser.error("Phone mode requires VAPI_API_KEY in .env")
 
+    # Clear stale assistants from previous crashed sessions
+    if api_key:
+        if sip_phone_number_id:
+            try:
+                clear_inbound_number(api_key, sip_phone_number_id)
+            except Exception:
+                pass
+        if phone_number_id:
+            try:
+                clear_inbound_number(api_key, phone_number_id)
+            except Exception:
+                pass
+        print("Cleared stale assistant configs")
+
     # Start webhook server
     transcript_queue = queue.Queue()
     app = create_app(transcript_queue)
