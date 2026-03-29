@@ -73,7 +73,6 @@ class GeminiBridge:
                     },
                     "realtimeInputConfig": {
                         "automaticActivityDetection": {
-                            "endOfSpeechSensitivity": "LOW",
                             "silenceDurationMs": 2000,
                             "prefixPaddingMs": 500
                         }
