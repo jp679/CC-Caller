@@ -122,6 +122,22 @@ class LiveKitAudioBridge:
             if "setupComplete" in data:
                 print("Gemini session ready!")
 
+            # Send initial silence to keep SIP connection alive
+            silence = bytes(4800)  # 100ms of silence at 24kHz 16-bit mono
+            for _ in range(5):  # 500ms total
+                frame = rtc.AudioFrame(
+                    data=silence,
+                    sample_rate=24000,
+                    num_channels=1,
+                    samples_per_channel=2400,
+                )
+                await self._audio_source.capture_frame(frame)
+
+            # Trigger Gemini to greet
+            await gemini_ws.send(json.dumps({
+                "realtimeInput": {"text": "Greet the caller."}
+            }))
+
             # Run audio forwarding tasks
             await asyncio.gather(
                 self._user_to_gemini(user_audio_stream, gemini_ws),
