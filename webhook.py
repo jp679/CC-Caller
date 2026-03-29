@@ -55,7 +55,10 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
 
             if fn_name == "askCodingAgent" and app.state.tool_call_handler:
                 task = fn_args.get("task", "")
-                result = app.state.tool_call_handler(task)
+                # Run in a thread pool so webhook events aren't blocked
+                import asyncio
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, app.state.tool_call_handler, task)
                 results.append({"toolCallId": tool_call_id, "result": result})
             else:
                 results.append({"toolCallId": tool_call_id, "result": "Tool not available."})
