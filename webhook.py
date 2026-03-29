@@ -226,7 +226,14 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
         if (msg.serverContent) {{
           const sc = msg.serverContent;
 
+          // Interruption: if model turn is done, clear flag
+          if (sc.turnComplete) {{
+            playQueue = [];
+          }}
+
           if (sc.inputTranscription && sc.inputTranscription.text) {{
+            // User is speaking — stop all audio playback immediately
+            stopPlayback();
             flushAgent();
             userBuf += ' ' + sc.inputTranscription.text;
             if (userTimer) clearTimeout(userTimer);
@@ -361,8 +368,19 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     return playCtx;
   }}
 
+  let currentSource = null;
+
+  function stopPlayback() {{
+    playQueue = [];
+    isPlaying = false;
+    if (currentSource) {{
+      try {{ currentSource.stop(); }} catch(e) {{}}
+      currentSource = null;
+    }}
+  }}
+
   function playNext() {{
-    if (playQueue.length === 0) {{ isPlaying = false; return; }}
+    if (playQueue.length === 0) {{ isPlaying = false; currentSource = null; return; }}
     isPlaying = true;
     const b64 = playQueue.shift();
     const binary = atob(b64);
@@ -379,7 +397,8 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     const src = ctx.createBufferSource();
     src.buffer = buf;
     src.connect(ctx.destination);
-    src.onended = () => playNext();
+    currentSource = src;
+    src.onended = () => {{ currentSource = null; playNext(); }};
     src.start();
   }}
 
