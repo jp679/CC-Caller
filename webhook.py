@@ -841,14 +841,17 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     sse = new EventSource('/live-stream');
     sse.onmessage = (event) => {{
       const data = JSON.parse(event.data);
-      if (data.type === 'progress' && ws && ws.readyState === WebSocket.OPEN) {{
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (data.type === 'progress') {{
+        log('[progress] ' + data.message);
         ws.send(JSON.stringify({{
-          clientContent: {{ turns: [{{ role: 'user', parts: [{{ text: '[PROGRESS] ' + data.message }}] }}], turnComplete: true }}
+          realtimeInput: {{ text: '[PROGRESS] ' + data.message }}
         }}));
       }}
-      if (data.type === 'result' && ws && ws.readyState === WebSocket.OPEN) {{
+      if (data.type === 'result') {{
+        log('[result received]');
         ws.send(JSON.stringify({{
-          clientContent: {{ turns: [{{ role: 'user', parts: [{{ text: '[RESULT] ' + data.message }}] }}], turnComplete: true }}
+          realtimeInput: {{ text: '[RESULT] Here is what was done: ' + data.message + '. Please read the key points to the user and ask what they would like to do next.' }}
         }}));
       }}
     }};

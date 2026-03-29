@@ -72,13 +72,13 @@ DISALLOWED_FILES = [
 
 
 CLEAN_TRANSCRIPT_PROMPT = (
-    "You are a transcript cleaner. The following is a raw voice transcript from a user "
-    "giving instructions to a coding assistant. Clean it up into a clear, actionable instruction. "
-    "Remove filler words, false starts, repetitions, and 'can you hear me' type noise. "
-    "Preserve the user's intent exactly — don't add or remove tasks. "
-    "If the user asked multiple things, list them clearly. "
-    "If the user spoke in Spanish, keep the instruction in Spanish. "
-    "Output ONLY the cleaned instruction, nothing else."
+    "You are a transcript cleaner. Clean up the raw voice transcript below. "
+    "Remove filler words, false starts, and repetitions. "
+    "Preserve the user's EXACT intent — don't add, remove, or judge anything. "
+    "If the user asked a question, keep it as a question. "
+    "If the user said something short like 'did you get it?' or 'yes', keep it as-is. "
+    "NEVER add commentary like 'no actionable instruction'. NEVER filter out messages. "
+    "Output ONLY the cleaned text, nothing else."
 )
 
 
