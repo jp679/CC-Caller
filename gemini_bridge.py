@@ -31,6 +31,7 @@ class GeminiBridge:
         self._browser_ws = None
         self._running = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self.mic_active = False  # Set from browser when mic is unmuted
 
     def inject_text(self, text: str) -> None:
         """Thread-safe: inject text into the Gemini conversation."""
@@ -105,8 +106,9 @@ class GeminiBridge:
         try:
             async for msg in browser_ws:
                 data = json.loads(msg)
-                if data.get("type") == "audio" and data.get("data"):
-                    # Forward PCM audio to Gemini
+                if data.get("type") == "mic_state":
+                    self.mic_active = data.get("active", False)
+                elif data.get("type") == "audio" and data.get("data"):
                     await gemini_ws.send(json.dumps({
                         "realtimeInput": {
                             "audio": {
@@ -141,8 +143,8 @@ class GeminiBridge:
 
                 sc = data["serverContent"]
 
-                # User transcript
-                if sc.get("inputTranscription", {}).get("text"):
+                # User transcript — only capture when mic is active
+                if sc.get("inputTranscription", {}).get("text") and self.mic_active:
                     text = sc["inputTranscription"]["text"]
                     user_buf += " " + text
                     if user_timer:

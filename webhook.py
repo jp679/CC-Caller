@@ -708,6 +708,10 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     const btn = document.getElementById('mic');
     btn.textContent = micMuted ? 'Mic OFF' : 'Mic ON';
     btn.className = micMuted ? '' : 'live';
+    // Tell bridge about mic state
+    if (ws && ws.readyState === WebSocket.OPEN) {{
+      ws.send(JSON.stringify({{ type: 'mic_state', active: !micMuted }}));
+    }}
     // Interrupt: stop playback when user unmutes to speak
     if (!micMuted) {{
       stopPlayback();
