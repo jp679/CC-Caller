@@ -11,6 +11,9 @@ import queue
 import threading
 from typing import Optional
 
+# Monkey-patch LiveKit plugin BEFORE importing google plugin
+import livekit_patch  # noqa: F401
+
 from livekit import rtc
 from livekit.agents import AgentSession, Agent, RoomInputOptions
 from livekit.agents.voice import MetricsCollectedEvent
@@ -56,7 +59,7 @@ class CCCallerAgent:
         self._inject_queue = asyncio.Queue()
 
         model = google.realtime.RealtimeModel(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash-native-audio-preview-12-2025",
             api_key=self.gemini_api_key,
             voice="Kore",
             temperature=0.7,
