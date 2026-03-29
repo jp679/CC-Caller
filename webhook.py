@@ -31,6 +31,37 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
             response.headers["Expires"] = "0"
         return response
 
+    # --- VAPI tool-call endpoint for persistent SIP sessions ---
+    app.state.tool_call_handler = None  # Set by cc_caller for --bridge --sip
+
+    @app.post("/tool-call")
+    async def tool_call(request: Request):
+        body = await request.json()
+        message = body.get("message", {})
+
+        if message.get("type") != "tool-calls":
+            return {"status": "ignored"}
+
+        tool_calls = message.get("toolCallList", [])
+        results = []
+
+        for tc in tool_calls:
+            fn = tc.get("function", {})
+            tool_call_id = tc.get("id", "")
+            fn_name = fn.get("name", "")
+            fn_args = fn.get("arguments", {})
+
+            print(f"[tool-call] {fn_name}({json.dumps(fn_args)[:100]})")
+
+            if fn_name == "askCodingAgent" and app.state.tool_call_handler:
+                task = fn_args.get("task", "")
+                result = app.state.tool_call_handler(task)
+                results.append({"toolCallId": tool_call_id, "result": result})
+            else:
+                results.append({"toolCallId": tool_call_id, "result": "Tool not available."})
+
+        return {"results": results}
+
     @app.post("/gemini-transcript")
     async def gemini_transcript(request: Request):
         body = await request.json()

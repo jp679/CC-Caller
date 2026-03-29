@@ -319,44 +319,50 @@ def main():
         )
 
         if use_sip:
-            from livekit_audio_bridge import LiveKitAudioBridge
-            from livekit_server import create_room, generate_participant_token
-            import asyncio as aio
+            from vapi_client import build_persistent_sip_config, configure_inbound_number
 
-            livekit_url = os.environ["LIVEKIT_URL"]
-            sip_uri = os.getenv("LIVEKIT_SIP_URI", "sip:6cm05gyh73z.sip.livekit.cloud")
-            room_name = "cc-caller"
+            api_key = os.environ["VAPI_API_KEY"]
+            sip_phone_number_id = os.environ["VAPI_SIP_PHONE_NUMBER_ID"]
+            sip_uri = os.getenv("VAPI_SIP_URI", "sip:cc-caller@sip.vapi.ai")
 
-            bridge = LiveKitAudioBridge(gemini_key, system_prompt, transcript_queue)
+            # Build assistant with askCodingAgent tool pointing to our webhook
+            sip_config = build_persistent_sip_config(webhook_url)
+            configure_inbound_number(api_key, sip_phone_number_id, sip_config)
 
-            # Create room
-            loop = aio.new_event_loop()
-            loop.run_until_complete(create_room(room_name))
-            agent_token = generate_participant_token(room_name, "gemini-agent")
-            loop.close()
+            # Set up the tool-call handler
+            def handle_tool_call(task: str) -> str:
+                nonlocal session_id, first_run
+                print(f"\n[tool] Task: {task}")
+                instruction = clean_transcript(task)
+                print(f"[tool] Cleaned: {instruction}")
+                output, session_id = run_claude(instruction, session_id, session_name=session_name, is_first_run=first_run)
+                first_run = False
+                print(f"[tool] Claude output: {len(output)} chars")
+                # Truncate for voice
+                return output[:2000] if len(output) > 2000 else output
 
-            # Start bridge in background thread
-            def start_sip_bridge():
-                loop = aio.new_event_loop()
-                aio.set_event_loop(loop)
-                bridge._loop = loop
-                try:
-                    loop.run_until_complete(bridge.run(livekit_url, agent_token))
-                except Exception as e:
-                    print(f"SIP bridge error: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-            bridge_thread = threading.Thread(target=start_sip_bridge, daemon=True)
-            bridge_thread.start()
+            app.state.tool_call_handler = handle_tool_call
 
             print(f"SIP URI: {sip_uri}")
-            print("Dial from Linphone to join")
+            print("Dial from Linphone — persistent session via VAPI tools")
             send_notification(
                 title="CC-Caller Live Ready",
-                message="Dial from Linphone to join",
+                message="Dial from Linphone",
                 url=sip_uri,
             )
+
+            # Keep running — the tool-call webhook handles everything
+            try:
+                print("\nPersistent SIP session active. Tool calls handled via webhook.")
+                print("Press Ctrl+C to exit.")
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\nExiting.")
+            finally:
+                clear_inbound_number(api_key, sip_phone_number_id)
+                cleanup_tunnel()
+            return
         else:
             from gemini_bridge import GeminiBridge
 

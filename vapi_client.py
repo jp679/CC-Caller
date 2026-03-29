@@ -37,6 +37,82 @@ SYSTEM_PROMPT_TEMPLATE = (
     "DETAIL:\n{detail}"
 )
 
+PERSISTENT_SIP_SYSTEM_PROMPT = (
+    "You are a voice relay between the user and a coding agent.\n"
+    "You have ZERO knowledge of any code, project, or files.\n"
+    "RULES:\n"
+    "- Greet: 'Hey, what would you like me to work on?'\n"
+    "- When the user gives ANY task, question, or instruction about code/files/project: "
+    "IMMEDIATELY call the askCodingAgent tool with their request. Say 'Let me check on that.' while waiting.\n"
+    "- When askCodingAgent returns: read the result to the user, then ask 'What next?'\n"
+    "- NEVER answer coding questions yourself. ALWAYS use the tool.\n"
+    "- If user says 'end session': say 'Goodbye.' and use endCall.\n"
+    "Be brief. English only."
+)
+
+
+def build_persistent_sip_config(webhook_url: str) -> dict:
+    return {
+        "transcriber": {
+            "provider": "deepgram",
+            "model": "nova-3",
+            "language": "en",
+            "smartFormat": True,
+            "keywords": [
+                "JSON:2", "API:2", "deploy:2", "compile:2", "TypeScript:2",
+                "JavaScript:2", "Python:2", "React:2", "Node:2", "npm:2",
+                "git:2", "commit:2", "endpoint:2", "webhook:2", "database:2",
+                "schema:2", "Docker:2", "frontend:2", "backend:2",
+                "HTML:2", "CSS:2", "localhost:2", "Claude:2",
+            ],
+        },
+        "model": {
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "messages": [
+                {"role": "system", "content": PERSISTENT_SIP_SYSTEM_PROMPT}
+            ],
+            "tools": [
+                {"type": "endCall"},
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "askCodingAgent",
+                        "description": "Send a task or question to the coding agent. Use this for ANY request about code, files, projects, or technical topics.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task": {
+                                    "type": "string",
+                                    "description": "The user's task or question to send to the coding agent"
+                                }
+                            },
+                            "required": ["task"]
+                        }
+                    },
+                    "server": {
+                        "url": f"{webhook_url.replace('/webhook', '')}/tool-call"
+                    }
+                }
+            ],
+        },
+        "firstMessage": "Hey, what would you like me to work on?",
+        "voice": {
+            "provider": "11labs",
+            "voiceId": "21m00Tcm4TlvDq8ikWAM",
+            "model": "eleven_turbo_v2_5",
+            "speed": 1.2,
+        },
+        "endCallPhrases": ["end session", "goodbye", "we're done"],
+        "stopSpeakingPlan": {
+            "numWords": 0,
+            "voiceSeconds": 0.2,
+            "backoffSeconds": 1,
+        },
+        "backgroundSound": "off",
+        "serverUrl": webhook_url,
+    }
+
 
 def build_assistant_config(
     summary: str,
