@@ -110,6 +110,8 @@ def build_persistent_sip_config(webhook_url: str) -> dict:
             "backoffSeconds": 1,
         },
         "backgroundSound": "off",
+        "silenceTimeoutSeconds": 300,
+        "maxDurationSeconds": 7200,
         "serverUrl": webhook_url,
     }
 
