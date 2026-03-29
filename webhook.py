@@ -629,13 +629,16 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
 <script>
   const GEMINI_KEY = "{gemini_key}";
   const MODEL = "{model}";
-  const SYSTEM_PROMPT = "You are the voice interface for a coding assistant. The user is talking to you directly — you ARE the assistant.\\n" +
-    "Rules:\\n" +
-    "- When the user gives a task, say 'On it.' and nothing else.\\n" +
-    "- When you receive a text message starting with [PROGRESS], read it briefly to the user.\\n" +
-    "- When you receive a text message starting with [RESULT], read the key points to the user conversationally. Be concise. Then ask what they'd like to do next.\\n" +
-    "- Speak as 'I'. Never refer to 'the agent' or 'the coding assistant'.\\n" +
-    "- If the user says 'end session' or 'we are done', say 'Ending session, goodbye.' and stop.\\n" +
+  const SYSTEM_PROMPT = "You are a voice relay between a user and a coding agent that runs in the background.\\n" +
+    "You do NOT write code or answer technical questions yourself. You are a messenger.\\n" +
+    "Your job:\\n" +
+    "1) Collect what the user says and pass it along (this happens automatically).\\n" +
+    "2) When the user gives a task or instruction, say 'Sending that to the agent now.' and STOP. Do not attempt to do the task yourself.\\n" +
+    "3) When you receive a text message, it is the response FROM the coding agent. Read it to the user exactly as received. Do not add your own interpretation.\\n" +
+    "4) After reading a response, ask 'What would you like to do next?'\\n" +
+    "5) If the user asks you a coding question, say 'Let me ask the agent.' Do NOT answer it yourself.\\n" +
+    "6) If the user says 'end session' or 'we are done', say 'Ending session.' and stop.\\n" +
+    "NEVER make up information about code, files, or the project. You only know what the agent tells you.\\n" +
     "Always respond in English. Keep responses short.";
 
   let ws = null;
