@@ -295,12 +295,12 @@ def main():
     first_run = True
 
     if args.bridge:
-        from gemini_bridge import GeminiBridge
-
         gemini_key = os.getenv("GEMINI_API_KEY", "")
         if not gemini_key:
             print("ERROR: --bridge requires GEMINI_API_KEY")
             return
+
+        use_sip = args.sip
 
         system_prompt = (
             "You are a voice telephone operator. You relay messages between a caller and a backend system.\n"
@@ -318,16 +318,58 @@ def main():
             "- Be extremely brief. Never elaborate."
         )
 
-        bridge = GeminiBridge(gemini_key, system_prompt, transcript_queue)
-        app.state.gemini_bridge = bridge
+        if use_sip:
+            from livekit_audio_bridge import LiveKitAudioBridge
+            from livekit_server import create_room, generate_participant_token
+            import asyncio as aio
 
-        call_url = f"{public_url}/call-bridge"
-        print(f"Browser join: {call_url}")
-        send_notification(
-            title="CC-Caller Live Ready",
-            message="Tap to start live voice session",
-            url=call_url,
-        )
+            livekit_url = os.environ["LIVEKIT_URL"]
+            sip_uri = os.getenv("LIVEKIT_SIP_URI", "sip:6cm05gyh73z.sip.livekit.cloud")
+            room_name = "cc-caller"
+
+            bridge = LiveKitAudioBridge(gemini_key, system_prompt, transcript_queue)
+
+            # Create room
+            loop = aio.new_event_loop()
+            loop.run_until_complete(create_room(room_name))
+            agent_token = generate_participant_token(room_name, "gemini-agent")
+            loop.close()
+
+            # Start bridge in background thread
+            def start_sip_bridge():
+                loop = aio.new_event_loop()
+                aio.set_event_loop(loop)
+                bridge._loop = loop
+                try:
+                    loop.run_until_complete(bridge.run(livekit_url, agent_token))
+                except Exception as e:
+                    print(f"SIP bridge error: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            bridge_thread = threading.Thread(target=start_sip_bridge, daemon=True)
+            bridge_thread.start()
+
+            print(f"SIP URI: {sip_uri}")
+            print("Dial from Linphone to join")
+            send_notification(
+                title="CC-Caller Live Ready",
+                message="Dial from Linphone to join",
+                url=sip_uri,
+            )
+        else:
+            from gemini_bridge import GeminiBridge
+
+            bridge = GeminiBridge(gemini_key, system_prompt, transcript_queue)
+            app.state.gemini_bridge = bridge
+
+            call_url = f"{public_url}/call-bridge"
+            print(f"Browser join: {call_url}")
+            send_notification(
+                title="CC-Caller Live Ready",
+                message="Tap to start live voice session",
+                url=call_url,
+            )
 
         # Main loop
         try:
