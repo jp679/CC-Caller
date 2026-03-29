@@ -71,11 +71,12 @@ DISALLOWED_FILES = [
 ]
 
 
-def run_claude(instruction: str, session_id: str, is_first_run: bool = False) -> Tuple[str, str]:
+def run_claude(instruction: str, session_id: str, session_name: str = "caller", is_first_run: bool = False) -> Tuple[str, str]:
     base_cmd = [
         "claude", "-p", "--output-format", "text",
         "--append-system-prompt", WORKER_SYSTEM_PROMPT,
         "--disallowedTools", "Bash(cc-caller*) Bash(python*cc_caller*) Bash(python*vapi*) Bash(curl*vapi*) Bash(curl*twilio*)",
+        "--name", session_name,
     ]
     if is_first_run:
         cmd = base_cmd + ["--resume", session_id, instruction]
@@ -311,7 +312,7 @@ def main():
         while True:
             print(f"\n--- Running Claude ---")
             print(f"Instruction: {instruction[:100]}...")
-            output, session_id = run_claude(instruction, session_id, is_first_run=first_run)
+            output, session_id = run_claude(instruction, session_id, session_name=session_name, is_first_run=first_run)
             first_run = False
             print(f"Output length: {len(output)} chars")
 
