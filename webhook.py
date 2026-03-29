@@ -51,7 +51,7 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
             fn_name = fn.get("name", "")
             fn_args = fn.get("arguments", {})
 
-            print(f"[tool-call] {fn_name}({json.dumps(fn_args)[:100]})")
+            print(f"[tool-call] {fn_name}({json_module.dumps(fn_args)[:100]})")
 
             if fn_name == "askCodingAgent" and app.state.tool_call_handler:
                 task = fn_args.get("task", "")
