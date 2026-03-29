@@ -334,6 +334,7 @@ def main():
             call_active = threading.Event()
             call_active.set()  # Assume active initially
             pending_result = {"output": None}  # Stores result if call drops mid-task
+            tool_lock = threading.Lock()  # Prevent concurrent tool calls
 
             # Build assistant with askCodingAgent tool
             sip_config = build_persistent_sip_config(webhook_url)
@@ -365,24 +366,33 @@ def main():
 
             def handle_tool_call(task: str) -> str:
                 nonlocal session_id, first_run
-                print(f"\n[tool] Task: {task}")
-                task_in_progress.set()
-                instruction = clean_transcript(task)
-                print(f"[tool] Cleaned: {instruction}")
-                output, session_id = run_claude(instruction, session_id, session_name=session_name, is_first_run=first_run)
-                first_run = False
-                print(f"[tool] Claude output: {len(output)} chars")
-                task_in_progress.clear()
+                if not tool_lock.acquire(timeout=1):
+                    print("[tool] Already processing a task, skipping duplicate")
+                    return "Still working on the previous request. Please wait."
+                try:
+                    print(f"\n[tool] Task: {task}")
+                    task_in_progress.set()
+                    instruction = clean_transcript(task)
+                    print(f"[tool] Cleaned: {instruction}")
+                    output, session_id = run_claude(instruction, session_id, session_name=session_name, is_first_run=first_run)
+                    first_run = False
+                    print(f"[tool] Claude output: {len(output)} chars")
+                    task_in_progress.clear()
+                except Exception as e:
+                    task_in_progress.clear()
+                    tool_lock.release()
+                    raise e
 
                 truncated = output[:2000] if len(output) > 2000 else output
 
                 # Check if call is still active
                 if call_active.is_set():
+                    tool_lock.release()
                     return truncated
                 else:
-                    # Call dropped while Claude was working — store result for callback
                     print("[hybrid] Call dropped during task — will call back")
                     pending_result["output"] = truncated
+                    tool_lock.release()
                     return truncated
 
             app.state.tool_call_handler = handle_tool_call
