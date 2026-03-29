@@ -220,7 +220,7 @@ def main():
     parser.add_argument("--web", action="store_true", help="Use VAPI web-based voice calls instead of phone")
     parser.add_argument("--gemini", action="store_true", help="Use Gemini Live for voice (free, no VAPI needed)")
     parser.add_argument("--live", action="store_true", help="Persistent Gemini voice session — no hang-up/call-back loop")
-    parser.add_argument("--livekit", action="store_true", help="LiveKit + Gemini persistent session — server-side, SIP + browser")
+    parser.add_argument("--bridge", action="store_true", help="Persistent Gemini voice session — server-side bridge, best mode")
     parser.add_argument("--sip", action="store_true", help="Use SIP for inbound calls (native phone ring via Linphone/Zoiper)")
     parser.add_argument("--tunnel", choices=["cloudflare", "ngrok"], default="cloudflare", help="Tunnel provider (default: cloudflare, free)")
     parser.add_argument("--session-id", type=str, default="caller", help="Claude session ID (default: 'caller', persists across restarts)")
@@ -229,8 +229,8 @@ def main():
     parser.add_argument("--port", type=int, default=int(os.getenv("WEBHOOK_PORT", "8765")))
     args = parser.parse_args()
 
-    if args.live or args.livekit:
-        args.inbound = True  # --live/--livekit imply inbound
+    if args.live or args.bridge:
+        args.inbound = True  # --live/--bridge imply inbound
     if not args.inbound and not args.instruction:
         parser.error("Either provide an instruction or use --inbound")
 
@@ -294,12 +294,12 @@ def main():
     last_call_time = 0.0
     first_run = True
 
-    if args.livekit:
+    if args.bridge:
         from gemini_bridge import GeminiBridge
 
         gemini_key = os.getenv("GEMINI_API_KEY", "")
         if not gemini_key:
-            print("ERROR: --livekit requires GEMINI_API_KEY")
+            print("ERROR: --bridge requires GEMINI_API_KEY")
             return
 
         system_prompt = (

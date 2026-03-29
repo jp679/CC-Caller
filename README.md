@@ -30,7 +30,15 @@ For push notifications, install [ntfy](https://ntfy.sh) on your phone and subscr
 
 ## Usage
 
-### Gemini Live mode (cheapest, recommended)
+### Bridge mode (persistent session, recommended)
+
+Persistent voice session via server-side Gemini bridge. No hang-up/call-back loop. Claude's results are injected directly into the conversation. Best experience.
+
+```bash
+cc-caller --bridge
+```
+
+### Gemini Live mode (cheapest)
 
 Direct audio-to-audio via Gemini 3.1 Flash Live. No VAPI, no Twilio. Just a Google AI API key.
 
