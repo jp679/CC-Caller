@@ -50,8 +50,22 @@ def build_assistant_config(
 
     return {
         "transcriber": {
-            "provider": "openai",
-            "model": "gpt-4o-mini-transcribe",
+            "provider": "deepgram",
+            "model": "nova-3",
+            "language": "en",
+            "smartFormat": True,
+            "keywords": [
+                "JSON", "API", "deploy", "compile", "TypeScript", "JavaScript",
+                "Python", "React", "Node", "npm", "git", "commit", "push",
+                "merge", "branch", "endpoint", "webhook", "REST", "GraphQL",
+                "SQL", "database", "schema", "Docker", "Kubernetes", "AWS",
+                "CI/CD", "pipeline", "lint", "refactor", "debug", "localhost",
+                "frontend", "backend", "component", "module", "package",
+                "HTML", "CSS", "Tailwind", "Next.js", "Vite", "FastAPI",
+                "Flask", "Express", "MongoDB", "Postgres", "Redis",
+                "Cloudflare", "ngrok", "VAPI", "Gemini", "Claude",
+                "SIP", "WebRTC", "WebSocket", "OAuth", "JWT", "async",
+            ],
         },
         "model": {
             "provider": "openai",
@@ -84,8 +98,22 @@ def build_assistant_config(
 def build_inbound_assistant_config(webhook_url: str) -> dict:
     return {
         "transcriber": {
-            "provider": "openai",
-            "model": "gpt-4o-mini-transcribe",
+            "provider": "deepgram",
+            "model": "nova-3",
+            "language": "en",
+            "smartFormat": True,
+            "keywords": [
+                "JSON", "API", "deploy", "compile", "TypeScript", "JavaScript",
+                "Python", "React", "Node", "npm", "git", "commit", "push",
+                "merge", "branch", "endpoint", "webhook", "REST", "GraphQL",
+                "SQL", "database", "schema", "Docker", "Kubernetes", "AWS",
+                "CI/CD", "pipeline", "lint", "refactor", "debug", "localhost",
+                "frontend", "backend", "component", "module", "package",
+                "HTML", "CSS", "Tailwind", "Next.js", "Vite", "FastAPI",
+                "Flask", "Express", "MongoDB", "Postgres", "Redis",
+                "Cloudflare", "ngrok", "VAPI", "Gemini", "Claude",
+                "SIP", "WebRTC", "WebSocket", "OAuth", "JWT", "async",
+            ],
         },
         "model": {
             "provider": "openai",
