@@ -1298,11 +1298,18 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
 </script>
 </body></html>""")
 
+    app.state.on_webhook_event = None  # Set by cc_caller for hybrid mode
+
     @app.post("/webhook")
     async def webhook(request: Request):
         body = await request.json()
-        print(f"[webhook] Received event: {body.get('message', {}).get('type', 'unknown')}")
+        event_type = body.get('message', {}).get('type', 'unknown')
+        print(f"[webhook] Received event: {event_type}")
         message = body.get("message", {})
+
+        # Notify hybrid mode of call lifecycle events
+        if app.state.on_webhook_event:
+            app.state.on_webhook_event(event_type)
 
         if message.get("type") != "end-of-call-report":
             return {"status": "ignored"}

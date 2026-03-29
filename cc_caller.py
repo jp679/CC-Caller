@@ -319,17 +319,45 @@ def main():
         )
 
         if use_sip:
-            from vapi_client import build_persistent_sip_config, configure_inbound_number
+            from vapi_client import (
+                build_persistent_sip_config, build_assistant_config,
+                configure_inbound_number, create_call,
+            )
 
             api_key = os.environ["VAPI_API_KEY"]
             sip_phone_number_id = os.environ["VAPI_SIP_PHONE_NUMBER_ID"]
+            phone_number_id = os.getenv("VAPI_PHONE_NUMBER_ID", "")
+            customer_number = os.getenv("USER_PHONE_NUMBER", "")
             sip_uri = os.getenv("VAPI_SIP_URI", "sip:cc-caller@sip.vapi.ai")
 
-            # Build assistant with askCodingAgent tool pointing to our webhook
+            # Track call state for hybrid mode
+            call_active = threading.Event()
+            call_active.set()  # Assume active initially
+            pending_result = {"output": None}  # Stores result if call drops mid-task
+
+            # Build assistant with askCodingAgent tool
             sip_config = build_persistent_sip_config(webhook_url)
             configure_inbound_number(api_key, sip_phone_number_id, sip_config)
 
-            # Set up the tool-call handler
+            # Track call lifecycle via webhook events
+            original_call_active = True
+
+            def on_webhook_event(event_type):
+                nonlocal original_call_active
+                if event_type == "status-update":
+                    pass  # Could check for ended status
+                if event_type == "end-of-call-report":
+                    print("[hybrid] Call ended")
+                    call_active.clear()
+                    original_call_active = False
+                if event_type in ("assistant.started",):
+                    print("[hybrid] Call started")
+                    call_active.set()
+                    original_call_active = True
+
+            app.state.on_webhook_event = on_webhook_event
+
+            # Tool-call handler with hybrid support
             def handle_tool_call(task: str) -> str:
                 nonlocal session_id, first_run
                 print(f"\n[tool] Task: {task}")
@@ -338,25 +366,81 @@ def main():
                 output, session_id = run_claude(instruction, session_id, session_name=session_name, is_first_run=first_run)
                 first_run = False
                 print(f"[tool] Claude output: {len(output)} chars")
-                # Truncate for voice
-                return output[:2000] if len(output) > 2000 else output
+
+                truncated = output[:2000] if len(output) > 2000 else output
+
+                # Check if call is still active
+                if call_active.is_set():
+                    return truncated
+                else:
+                    # Call dropped while Claude was working — store result for callback
+                    print("[hybrid] Call dropped during task — will call back")
+                    pending_result["output"] = truncated
+                    return truncated  # Return anyway (VAPI won't use it, call is gone)
 
             app.state.tool_call_handler = handle_tool_call
 
             print(f"SIP URI: {sip_uri}")
-            print("Dial from Linphone — persistent session via VAPI tools")
+            print("Dial from Linphone — hybrid persistent session")
             send_notification(
                 title="CC-Caller Live Ready",
                 message="Dial from Linphone",
                 url=sip_uri,
             )
 
-            # Keep running — the tool-call webhook handles everything
+            # Main loop — handles callbacks when call drops mid-task
             try:
-                print("\nPersistent SIP session active. Tool calls handled via webhook.")
-                print("Press Ctrl+C to exit.")
+                print("\nHybrid session active. Press Ctrl+C to exit.")
                 while True:
                     time.sleep(1)
+
+                    # Check if there's a pending result to call back with
+                    if pending_result["output"] and not call_active.is_set():
+                        output = pending_result["output"]
+                        pending_result["output"] = None
+                        print(f"\n[hybrid] Calling back with result ({len(output)} chars)...")
+
+                        # Summarize for callback
+                        summary_data = summarize_output(output)
+
+                        # Build callback assistant config
+                        callback_config = build_assistant_config(
+                            summary=summary_data["summary"],
+                            detail=summary_data["detail"],
+                            webhook_url=webhook_url,
+                        )
+
+                        # Call back via SIP
+                        try:
+                            create_call(
+                                api_key=api_key,
+                                phone_number_id=sip_phone_number_id,
+                                customer_number="cc-caller",
+                                assistant_config=callback_config,
+                            )
+                            print("[hybrid] Callback initiated via SIP")
+                        except Exception as e:
+                            print(f"[hybrid] SIP callback failed: {e}")
+                            # Try phone as fallback
+                            if phone_number_id and customer_number:
+                                try:
+                                    create_call(
+                                        api_key=api_key,
+                                        phone_number_id=phone_number_id,
+                                        customer_number=customer_number,
+                                        assistant_config=callback_config,
+                                    )
+                                    print("[hybrid] Callback initiated via phone")
+                                except Exception as e2:
+                                    print(f"[hybrid] Phone callback failed: {e2}")
+
+                            # Always send ntfy as backup
+                            send_notification(
+                                title="CC-Caller Result Ready",
+                                message=summary_data["summary"][:200],
+                                url=sip_uri,
+                            )
+
             except KeyboardInterrupt:
                 print("\nExiting.")
             finally:
