@@ -56,7 +56,7 @@ class CCCallerAgent:
         self._inject_queue = asyncio.Queue()
 
         model = google.realtime.RealtimeModel(
-            model="gemini-3.1-flash-live-preview",
+            model="gemini-2.5-flash-native-audio-preview",
             api_key=self.gemini_api_key,
             voice="Kore",
             temperature=0.7,
