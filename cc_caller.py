@@ -360,6 +360,12 @@ def main():
             cleanup_tunnel()
             return
 
+    # Clean the initial instruction if it came from voice (inbound)
+    if args.inbound and instruction:
+        print("Cleaning transcript...")
+        instruction = clean_transcript(instruction)
+        print(f"Instruction: {instruction}")
+
     first_run = True
     try:
         while True:
