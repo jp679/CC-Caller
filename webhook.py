@@ -614,11 +614,14 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     cursor: pointer; margin: 10px; }}
   #connect {{ background: #22c55e; color: white; }}
   #end {{ background: #ef4444; color: white; display: none; }}
+  #mic {{ background: #555; color: white; display: none; font-size: 1.4em; padding: 20px 40px; }}
+  #mic.live {{ background: #ef4444; }}
 </style>
 </head><body>
 <h1>CC-Caller <span style="font-size:0.5em;opacity:0.6">Live</span></h1>
 <p id="status">Tap Connect to start a live session</p>
 <button id="connect">Connect</button>
+<button id="mic">Mic OFF</button>
 <button id="end">End Session</button>
 <div id="log" style="margin-top:20px;font-size:0.9em;opacity:0.7;max-width:90vw;text-align:center"></div>
 
@@ -638,6 +641,7 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
   let audioCtx = null;
   let micStream = null;
   let processor = null;
+  let micMuted = true;
   let userMessages = [];
   let isConnected = false;
   let playQueue = [];
@@ -712,12 +716,13 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
         try {{ msg = JSON.parse(raw); }} catch(e) {{ return; }}
 
         if (msg.setupComplete !== undefined) {{
-          log('Connected — live session active');
+          log('Connected — tap Mic to speak');
           isConnected = true;
-          document.getElementById('status').textContent = 'Live — speak anytime';
+          document.getElementById('status').textContent = 'Live — tap Mic to speak';
           document.getElementById('status').className = '';
           document.getElementById('end').style.display = 'inline-block';
-          startMic();
+          document.getElementById('mic').style.display = 'inline-block';
+          startMic();  // starts mic but muted
           startSSE();
           resetIdleTimer();
           return;
@@ -808,6 +813,18 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
 
   document.getElementById('end').onclick = () => endSession();
 
+  document.getElementById('mic').onclick = () => {{
+    micMuted = !micMuted;
+    const btn = document.getElementById('mic');
+    if (micMuted) {{
+      btn.textContent = 'Mic OFF';
+      btn.classList.remove('live');
+    }} else {{
+      btn.textContent = 'Mic ON';
+      btn.classList.add('live');
+    }}
+  }};
+
   function endSession() {{
     stopMic();
     stopSSE();
@@ -861,7 +878,7 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     const source = audioCtx.createMediaStreamSource(micStream);
     processor = audioCtx.createScriptProcessor(4096, 1, 1);
     processor.onaudioprocess = (e) => {{
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (!ws || ws.readyState !== WebSocket.OPEN || micMuted) return;
       const float32 = e.inputBuffer.getChannelData(0);
       const int16 = new Int16Array(float32.length);
       for (let i = 0; i < float32.length; i++) int16[i] = Math.max(-1, Math.min(1, float32[i])) * 0x7FFF;
