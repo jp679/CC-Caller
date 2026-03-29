@@ -291,55 +291,57 @@ def main():
 
     if args.livekit:
         import asyncio as aio
-        import livekit_agent
-        from livekit_server import create_room, generate_participant_token
+        import websockets as ws_lib
+        from gemini_bridge import GeminiBridge
 
         gemini_key = os.getenv("GEMINI_API_KEY", "")
-        livekit_url = os.environ["LIVEKIT_URL"]
-
         if not gemini_key:
             print("ERROR: --livekit requires GEMINI_API_KEY")
             return
 
-        room_name = "cc-caller"
-
-        # Set shared queue on the agent module
-        livekit_agent.transcript_queue = transcript_queue
-
-        # Create room and generate tokens
-        loop = aio.new_event_loop()
-        room_info = loop.run_until_complete(create_room(room_name))
-        print(f"LiveKit room created: {room_info}")
-
-        user_token = generate_participant_token(room_name, "user")
-        agent_token = generate_participant_token(room_name, "agent")
-        call_url = f"{public_url}/call-livekit?token={user_token}&url={livekit_url}"
-        print(f"Browser join: {call_url}")
-        send_notification(
-            title="CC-Caller LiveKit Ready",
-            message="Tap to join voice session",
-            url=call_url,
+        bridge_port = 8766
+        system_prompt = (
+            "You are a voice relay between a user and a coding agent that runs in the background.\n"
+            "You do NOT write code or answer technical questions yourself. You are a messenger.\n"
+            "Your job:\n"
+            "1) Greet the user and ask what they'd like to work on.\n"
+            "2) When the user gives a task, say 'Sending that to the agent now.' and wait.\n"
+            "3) When you receive text, read it to the user conversationally.\n"
+            "4) After reading a response, ask 'What would you like to do next?'\n"
+            "5) If the user asks a coding question, say 'Let me ask the agent.'\n"
+            "6) If the user says 'end session', say 'Ending session.' and stop.\n"
+            "NEVER make up information about code or the project.\n"
+            "Always respond in English. Keep responses short."
         )
-        loop.close()
 
-        # Start the agent in a background thread
-        def start_agent():
+        bridge = GeminiBridge(gemini_key, system_prompt, transcript_queue)
+
+        # Start bridge WebSocket server in background
+        def start_bridge():
             loop = aio.new_event_loop()
             aio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(
-                    livekit_agent.run_agent(livekit_url, agent_token, gemini_key)
-                )
-            except Exception as e:
-                print(f"Agent error: {e}")
-                import traceback
-                traceback.print_exc()
+            bridge._loop = loop
 
-        agent_thread = threading.Thread(target=start_agent, daemon=True)
-        agent_thread.start()
-        print("LiveKit agent started — waiting for you to join")
+            async def run():
+                async with ws_lib.serve(bridge.handle_browser_ws, "0.0.0.0", bridge_port):
+                    print(f"Bridge WebSocket on ws://localhost:{bridge_port}")
+                    await aio.Future()  # run forever
 
-        # Main loop: wait for transcripts, run Claude, inject results
+            loop.run_until_complete(run())
+
+        bridge_thread = threading.Thread(target=start_bridge, daemon=True)
+        bridge_thread.start()
+        time.sleep(1)
+
+        call_url = f"{public_url}/call-bridge?wsport={bridge_port}"
+        print(f"Browser join: {call_url}")
+        send_notification(
+            title="CC-Caller Live Ready",
+            message="Tap to start live voice session",
+            url=call_url,
+        )
+
+        # Main loop
         try:
             while True:
                 print("\nWaiting for your voice input...")
@@ -359,13 +361,13 @@ def main():
                 instruction = clean_transcript(transcript)
                 print(f"Instruction: {instruction}")
 
-                # Progress pings while Claude works
+                # Progress pings
                 progress_stop = threading.Event()
                 def push_progress():
                     while not progress_stop.is_set():
                         progress_stop.wait(15)
-                        if not progress_stop.is_set() and livekit_agent.inject_fn:
-                            livekit_agent.inject_fn("Still working on that...")
+                        if not progress_stop.is_set():
+                            bridge.inject_text("Still working on that...")
                             print("  [progress ping]")
 
                 progress_thread = threading.Thread(target=push_progress, daemon=True)
@@ -377,12 +379,10 @@ def main():
                 progress_stop.set()
                 print(f"Output length: {len(output)} chars")
 
-                # Inject result into Gemini conversation
-                if livekit_agent.inject_fn:
-                    livekit_agent.inject_fn(f"Here is what was done: {output}. What would you like to do next?")
-                    print("Result injected into LiveKit session")
-                else:
-                    print("WARNING: inject_fn not available")
+                # Inject result directly into Gemini
+                truncated = output[:2000] if len(output) > 2000 else output
+                bridge.inject_text(f"Here is what was done: {truncated}. What would you like to do next?")
+                print("Result injected into Gemini session")
 
         except KeyboardInterrupt:
             print("\nInterrupted.")

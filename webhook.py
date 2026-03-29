@@ -570,6 +570,171 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
 </script>
 </body></html>""")
 
+    # --- Live Bridge page (Python-managed Gemini) ---
+
+    @app.get("/call-bridge", response_class=HTMLResponse)
+    async def bridge_page(wsport: int = 8766):
+        return HTMLResponse(f"""<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CC-Caller Live Bridge</title>
+<style>
+  body {{ font-family: -apple-system, sans-serif; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; min-height: 100vh; margin: 0;
+    background: #0a0a0a; color: #fff; }}
+  #status {{ font-size: 1.5em; margin: 20px; text-align: center; }}
+  .pulse {{ animation: pulse 2s infinite; }}
+  @keyframes pulse {{ 0%,100%{{ opacity:1 }} 50%{{ opacity:0.5 }} }}
+  button {{ padding: 16px 32px; font-size: 1.2em; border: none; border-radius: 12px;
+    cursor: pointer; margin: 10px; }}
+  #connect {{ background: #22c55e; color: white; }}
+  #end {{ background: #ef4444; color: white; display: none; }}
+  #mic {{ background: #555; color: white; display: none; font-size: 1.4em; padding: 20px 40px; }}
+  #mic.live {{ background: #ef4444; }}
+</style>
+</head><body>
+<h1>CC-Caller <span style="font-size:0.5em;opacity:0.6">Live</span></h1>
+<p id="status">Tap Connect to start</p>
+<button id="connect">Connect</button>
+<button id="mic">Mic OFF</button>
+<button id="end">End Session</button>
+<div id="log" style="margin-top:20px;font-size:0.9em;opacity:0.7;max-width:90vw;text-align:center"></div>
+
+<script>
+  const WS_PORT = {wsport};
+  let ws = null;
+  let audioCtx = null;
+  let micStream = null;
+  let processor = null;
+  let micMuted = true;
+  let playCtx = null;
+  let playQueue = [];
+  let isPlaying = false;
+  let currentSource = null;
+
+  document.getElementById('connect').onclick = async () => {{
+    document.getElementById('status').textContent = 'Connecting...';
+    document.getElementById('status').className = 'pulse';
+    document.getElementById('connect').style.display = 'none';
+
+    // Connect to bridge WebSocket on localhost
+    ws = new WebSocket('ws://localhost:' + WS_PORT);
+
+    ws.onmessage = (event) => {{
+      const data = JSON.parse(event.data);
+
+      if (data.type === 'ready') {{
+        log('Gemini ready');
+        document.getElementById('status').textContent = 'Connected — tap Mic to speak';
+        document.getElementById('status').className = '';
+        document.getElementById('end').style.display = 'inline-block';
+        document.getElementById('mic').style.display = 'inline-block';
+        startMic();
+      }}
+
+      if (data.type === 'audio') {{
+        playQueue.push(data.data);
+        if (!isPlaying) playNext();
+      }}
+
+      if (data.type === 'transcript') {{
+        log(data.role + ': ' + data.text);
+      }}
+    }};
+
+    ws.onerror = () => {{
+      log('Connection error');
+      document.getElementById('status').textContent = 'Error';
+      document.getElementById('connect').style.display = 'inline-block';
+    }};
+
+    ws.onclose = () => {{
+      log('Disconnected');
+      document.getElementById('status').textContent = 'Session ended';
+      document.getElementById('end').style.display = 'none';
+      document.getElementById('mic').style.display = 'none';
+      document.getElementById('connect').style.display = 'inline-block';
+      stopMic();
+    }};
+  }};
+
+  document.getElementById('mic').onclick = () => {{
+    micMuted = !micMuted;
+    const btn = document.getElementById('mic');
+    btn.textContent = micMuted ? 'Mic OFF' : 'Mic ON';
+    btn.className = micMuted ? '' : 'live';
+  }};
+
+  document.getElementById('end').onclick = () => {{
+    stopMic();
+    if (ws) ws.close();
+  }};
+
+  async function startMic() {{
+    micStream = await navigator.mediaDevices.getUserMedia({{
+      audio: {{ sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true }}
+    }});
+    audioCtx = new AudioContext({{ sampleRate: 16000 }});
+    const source = audioCtx.createMediaStreamSource(micStream);
+    processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    processor.onaudioprocess = (e) => {{
+      if (!ws || ws.readyState !== WebSocket.OPEN || micMuted) return;
+      const float32 = e.inputBuffer.getChannelData(0);
+      const int16 = new Int16Array(float32.length);
+      for (let i = 0; i < float32.length; i++) int16[i] = Math.max(-1, Math.min(1, float32[i])) * 0x7FFF;
+      const bytes = new Uint8Array(int16.buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      ws.send(JSON.stringify({{ type: 'audio', data: btoa(binary) }}));
+    }};
+    source.connect(processor);
+    processor.connect(audioCtx.destination);
+  }}
+
+  function stopMic() {{
+    if (processor) {{ processor.disconnect(); processor = null; }}
+    if (micStream) {{ micStream.getTracks().forEach(t => t.stop()); micStream = null; }}
+  }}
+
+  function getPlayCtx() {{
+    if (!playCtx) playCtx = new (window.AudioContext || window.webkitAudioContext)({{ sampleRate: 24000 }});
+    if (playCtx.state === 'suspended') playCtx.resume();
+    return playCtx;
+  }}
+
+  function stopPlayback() {{
+    playQueue = [];
+    isPlaying = false;
+    if (currentSource) {{ try {{ currentSource.stop(); }} catch(e) {{}} currentSource = null; }}
+  }}
+
+  function playNext() {{
+    if (playQueue.length === 0) {{ isPlaying = false; currentSource = null; return; }}
+    isPlaying = true;
+    const b64 = playQueue.shift();
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const int16 = new Int16Array(bytes.buffer);
+    const float32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 0x7FFF;
+    const ctx = getPlayCtx();
+    const buf = ctx.createBuffer(1, float32.length, 24000);
+    buf.getChannelData(0).set(float32);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    currentSource = src;
+    src.onended = () => {{ currentSource = null; playNext(); }};
+    src.start();
+  }}
+
+  function log(msg) {{
+    document.getElementById('log').innerHTML = '<p>' + msg + '</p>' + document.getElementById('log').innerHTML;
+  }}
+</script>
+</body></html>""")
+
     # --- LiveKit browser join page ---
 
     @app.get("/call-livekit", response_class=HTMLResponse)
