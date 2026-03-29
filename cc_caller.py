@@ -55,16 +55,29 @@ def name_to_uuid(name: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"cc-caller.{name}"))
 
 
+WORKER_SYSTEM_PROMPT = (
+    "You are a coding assistant being orchestrated by cc-caller. "
+    "Do your task and report what you did. "
+    "NEVER run cc-caller, cc_caller.py, or any voice/phone/VAPI related commands. "
+    "NEVER read or use .env files for making calls. "
+    "NEVER attempt to call, phone, or contact the user — the orchestrator handles that. "
+    "Just do the coding work and output your results."
+)
+
+
 def run_claude(instruction: str, session_id: str, is_first_run: bool = False) -> Tuple[str, str]:
+    base_cmd = [
+        "claude", "-p", "--output-format", "text",
+        "--append-system-prompt", WORKER_SYSTEM_PROMPT,
+    ]
     if is_first_run:
-        # Try to resume existing session; if it fails, start a new one
-        cmd = ["claude", "-p", "--output-format", "text", "--resume", session_id, instruction]
+        cmd = base_cmd + ["--resume", session_id, instruction]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            cmd = ["claude", "-p", "--output-format", "text", "--session-id", session_id, instruction]
+            cmd = base_cmd + ["--session-id", session_id, instruction]
             result = subprocess.run(cmd, capture_output=True, text=True)
     else:
-        cmd = ["claude", "-p", "--output-format", "text", "--resume", session_id, instruction]
+        cmd = base_cmd + ["--resume", session_id, instruction]
         result = subprocess.run(cmd, capture_output=True, text=True)
     return result.stdout, session_id
 
