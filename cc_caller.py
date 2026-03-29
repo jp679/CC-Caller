@@ -290,8 +290,6 @@ def main():
     first_run = True
 
     if args.livekit:
-        import asyncio as aio
-        import websockets as ws_lib
         from gemini_bridge import GeminiBridge
 
         gemini_key = os.getenv("GEMINI_API_KEY", "")
@@ -299,7 +297,6 @@ def main():
             print("ERROR: --livekit requires GEMINI_API_KEY")
             return
 
-        bridge_port = 8766
         system_prompt = (
             "You are a voice relay between a user and a coding agent that runs in the background.\n"
             "You do NOT write code or answer technical questions yourself. You are a messenger.\n"
@@ -315,25 +312,9 @@ def main():
         )
 
         bridge = GeminiBridge(gemini_key, system_prompt, transcript_queue)
+        app.state.gemini_bridge = bridge
 
-        # Start bridge WebSocket server in background
-        def start_bridge():
-            loop = aio.new_event_loop()
-            aio.set_event_loop(loop)
-            bridge._loop = loop
-
-            async def run():
-                async with ws_lib.serve(bridge.handle_browser_ws, "0.0.0.0", bridge_port):
-                    print(f"Bridge WebSocket on ws://localhost:{bridge_port}")
-                    await aio.Future()  # run forever
-
-            loop.run_until_complete(run())
-
-        bridge_thread = threading.Thread(target=start_bridge, daemon=True)
-        bridge_thread.start()
-        time.sleep(1)
-
-        call_url = f"{public_url}/call-bridge?wsport={bridge_port}"
+        call_url = f"{public_url}/call-bridge"
         print(f"Browser join: {call_url}")
         send_notification(
             title="CC-Caller Live Ready",

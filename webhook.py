@@ -2,7 +2,7 @@ import asyncio
 import json as json_module
 import queue
 import threading
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from starlette.responses import StreamingResponse
 
@@ -14,6 +14,7 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     # SSE for live mode
     app.state.live_sse_queue = queue.Queue()
     app.state.live_gemini_config = None
+    app.state.gemini_bridge = None
 
     @app.get("/webhook")
     async def webhook_health():
@@ -570,10 +571,43 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
 </script>
 </body></html>""")
 
-    # --- Live Bridge page (Python-managed Gemini) ---
+    # --- Live Bridge WebSocket + page ---
+
+    @app.websocket("/ws-bridge")
+    async def bridge_ws(websocket: WebSocket):
+        await websocket.accept()
+        bridge = app.state.gemini_bridge
+        if not bridge:
+            await websocket.close(code=1008, reason="No bridge configured")
+            return
+
+        # Wrap FastAPI WebSocket to match the bridge's expected interface
+        import websockets as ws_lib
+
+        class FastAPIWSAdapter:
+            def __init__(self, ws):
+                self._ws = ws
+            async def recv(self):
+                return await self._ws.receive_text()
+            async def send(self, data):
+                await self._ws.send_text(data)
+            async def __aiter__(self):
+                try:
+                    while True:
+                        yield await self._ws.receive_text()
+                except WebSocketDisconnect:
+                    return
+
+        adapter = FastAPIWSAdapter(websocket)
+        try:
+            await bridge.handle_browser_ws(adapter)
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            print(f"[bridge] Error: {e}")
 
     @app.get("/call-bridge", response_class=HTMLResponse)
-    async def bridge_page(wsport: int = 8766):
+    async def bridge_page():
         return HTMLResponse(f"""<!DOCTYPE html>
 <html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -601,7 +635,7 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
 <div id="log" style="margin-top:20px;font-size:0.9em;opacity:0.7;max-width:90vw;text-align:center"></div>
 
 <script>
-  const WS_PORT = {wsport};
+  const WS_URL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws-bridge';
   let ws = null;
   let audioCtx = null;
   let micStream = null;
@@ -618,7 +652,7 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     document.getElementById('connect').style.display = 'none';
 
     // Connect to bridge WebSocket on localhost
-    ws = new WebSocket('ws://localhost:' + WS_PORT);
+    ws = new WebSocket(WS_URL);
 
     ws.onmessage = (event) => {{
       const data = JSON.parse(event.data);

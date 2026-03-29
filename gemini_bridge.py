@@ -47,6 +47,7 @@ class GeminiBridge:
     async def handle_browser_ws(self, websocket, path=None):
         """Handle a browser WebSocket connection."""
         self._browser_ws = websocket
+        self._loop = asyncio.get_event_loop()
         logger.info("Browser connected")
 
         # Connect to Gemini
