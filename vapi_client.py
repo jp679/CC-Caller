@@ -77,6 +77,7 @@ def build_assistant_config(
             "voiceSeconds": 0.2,
             "backoffSeconds": 1,
         },
+        "endCallPhrases": ["go ahead", "that's all", "stop", "we're done"],
         "backgroundSound": "off",
         "serverUrl": webhook_url,
     }
