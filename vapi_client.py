@@ -72,7 +72,6 @@ def build_assistant_config(
             "model": "eleven_multilingual_v2",
             "speed": 1.2,
         },
-        "endCallPhrases": ["go ahead", "that's all", "stop", "we're done"],
         "stopSpeakingPlan": {
             "numWords": 0,
             "voiceSeconds": 0.2,
