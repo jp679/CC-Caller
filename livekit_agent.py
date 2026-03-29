@@ -1,41 +1,33 @@
 """LiveKit + Gemini Live agent for CC-Caller.
 
-Uses LiveKit's proper agent dispatch pattern for reliable audio routing.
-Communicates with cc-caller via shared queues.
+Manually connects to a LiveKit room and sets up Gemini via AgentSession.
+Waits for a user participant, then starts the voice session.
 """
 
 import asyncio
 import logging
 import os
 import queue
-import sys
 from typing import Optional
 
 # Monkey-patch LiveKit plugin BEFORE importing google plugin
 import livekit_patch  # noqa: F401
 
-from livekit.agents import (
-    Agent,
-    AgentSession,
-    WorkerOptions,
-    WorkerType,
-    JobContext,
-    cli,
-)
+from livekit import rtc
+from livekit.agents import AgentSession, Agent
 from livekit.plugins import google
 
 logger = logging.getLogger("cc-caller-agent")
 
-# Shared state between agent and cc-caller (set from cc_caller.py)
+# Shared state (set from cc_caller.py)
 transcript_queue: Optional[queue.Queue] = None
-inject_fn = None  # Will be set to a function that injects text
-
+inject_fn = None
 
 SYSTEM_PROMPT = (
     "You are a voice relay between a user and a coding agent that runs in the background.\n"
     "You do NOT write code or answer technical questions yourself. You are a messenger.\n"
     "Your job:\n"
-    "1) Collect what the user says.\n"
+    "1) Greet the user and ask what they'd like to work on.\n"
     "2) When the user gives a task, say 'Sending that to the agent now.' and wait.\n"
     "3) When you are told to say something, read it to the user exactly.\n"
     "4) After reading a response, ask 'What would you like to do next?'\n"
@@ -46,16 +38,36 @@ SYSTEM_PROMPT = (
 )
 
 
-async def entrypoint(ctx: JobContext):
-    """Called by LiveKit when a user joins the room."""
+async def run_agent(livekit_url: str, agent_token: str, gemini_api_key: str):
+    """Connect to room, wait for user, start Gemini session."""
     global inject_fn
 
-    await ctx.connect()
-    logger.info("Agent connected to room, waiting for participant...")
+    room = rtc.Room()
+    await room.connect(livekit_url, agent_token)
+    logger.info(f"Agent connected to room: {room.name}")
+
+    # Wait for a user participant to join
+    user_joined = asyncio.Event()
+
+    @room.on("participant_connected")
+    def on_participant(participant: rtc.RemoteParticipant):
+        logger.info(f"Participant joined: {participant.identity}")
+        user_joined.set()
+
+    # Check if someone is already in the room
+    if len(room.remote_participants) > 0:
+        user_joined.set()
+
+    print("Waiting for user to join room...")
+    await user_joined.wait()
+    print("User joined! Starting Gemini session...")
+
+    # Small delay to let tracks publish
+    await asyncio.sleep(2)
 
     model = google.realtime.RealtimeModel(
         model="gemini-2.5-flash-native-audio-preview-12-2025",
-        api_key=os.environ.get("GEMINI_API_KEY", ""),
+        api_key=gemini_api_key,
         voice="Kore",
         temperature=0.7,
         instructions=SYSTEM_PROMPT,
@@ -63,7 +75,7 @@ async def entrypoint(ctx: JobContext):
 
     session = AgentSession(llm=model)
 
-    # Capture transcripts
+    # Capture user transcripts
     @session.on("user_input_transcribed")
     def on_transcript(ev):
         text = ev.transcript if hasattr(ev, 'transcript') else str(ev)
@@ -72,23 +84,32 @@ async def entrypoint(ctx: JobContext):
             transcript_queue.put(text)
 
     # Set up injection function
+    loop = asyncio.get_running_loop()
+
     async def _say(text: str):
-        await session.say(text, allow_interruptions=True)
+        try:
+            await session.say(text, allow_interruptions=True)
+        except Exception as e:
+            logger.error(f"Say error: {e}")
 
-    inject_fn = lambda text: asyncio.run_coroutine_threadsafe(_say(text), asyncio.get_event_loop())
+    def _inject(text: str):
+        asyncio.run_coroutine_threadsafe(_say(text), loop)
 
-    agent = Agent(instructions=SYSTEM_PROMPT)
-    await session.start(room=ctx.room, agent=agent)
-    logger.info("Agent session started")
+    inject_fn = _inject
 
-
-def run_worker():
-    """Start the LiveKit agent worker."""
-    opts = WorkerOptions(
-        entrypoint_fnc=entrypoint,
-        worker_type=WorkerType.ROOM,
-        api_key=os.environ["LIVEKIT_API_KEY"],
-        api_secret=os.environ["LIVEKIT_API_SECRET"],
-        ws_url=os.environ["LIVEKIT_URL"],
+    # Start the agent session in the room
+    await session.start(
+        room=room,
+        agent=Agent(instructions=SYSTEM_PROMPT),
     )
-    cli.run_app(opts)
+    print("Gemini session active!")
+
+    # Wait until room disconnects
+    disconnect = asyncio.Event()
+
+    @room.on("disconnected")
+    def on_dc():
+        disconnect.set()
+
+    await disconnect.wait()
+    await room.disconnect()

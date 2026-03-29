@@ -306,12 +306,13 @@ def main():
         # Set shared queue on the agent module
         livekit_agent.transcript_queue = transcript_queue
 
-        # Create room and generate join token
+        # Create room and generate tokens
         loop = aio.new_event_loop()
         room_info = loop.run_until_complete(create_room(room_name))
         print(f"LiveKit room created: {room_info}")
 
         user_token = generate_participant_token(room_name, "user")
+        agent_token = generate_participant_token(room_name, "agent")
         call_url = f"{public_url}/call-livekit?token={user_token}&url={livekit_url}"
         print(f"Browser join: {call_url}")
         send_notification(
@@ -321,13 +322,22 @@ def main():
         )
         loop.close()
 
-        # Start the LiveKit agent worker in a background thread
-        def start_worker():
-            livekit_agent.run_worker()
+        # Start the agent in a background thread
+        def start_agent():
+            loop = aio.new_event_loop()
+            aio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(
+                    livekit_agent.run_agent(livekit_url, agent_token, gemini_key)
+                )
+            except Exception as e:
+                print(f"Agent error: {e}")
+                import traceback
+                traceback.print_exc()
 
-        agent_thread = threading.Thread(target=start_worker, daemon=True)
+        agent_thread = threading.Thread(target=start_agent, daemon=True)
         agent_thread.start()
-        print("LiveKit agent worker started")
+        print("LiveKit agent started — waiting for you to join")
 
         # Main loop: wait for transcripts, run Claude, inject results
         try:
@@ -372,7 +382,7 @@ def main():
                     livekit_agent.inject_fn(f"Here is what was done: {output}. What would you like to do next?")
                     print("Result injected into LiveKit session")
                 else:
-                    print("WARNING: inject_fn not available, agent may not be connected")
+                    print("WARNING: inject_fn not available")
 
         except KeyboardInterrupt:
             print("\nInterrupted.")
