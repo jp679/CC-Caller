@@ -48,8 +48,9 @@ def build_assistant_config(
     return {
         "transcriber": {
             "provider": "deepgram",
-            "model": "nova-2",
+            "model": "nova-3",
             "language": "multi",
+            "smartFormat": True,
         },
         "model": {
             "provider": "anthropic",
@@ -83,8 +84,9 @@ def build_inbound_assistant_config(webhook_url: str) -> dict:
     return {
         "transcriber": {
             "provider": "deepgram",
-            "model": "nova-2",
+            "model": "nova-3",
             "language": "multi",
+            "smartFormat": True,
         },
         "model": {
             "provider": "anthropic",
