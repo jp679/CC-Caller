@@ -343,29 +343,36 @@ def main():
             original_call_active = True
 
             def on_webhook_event(event_type):
-                nonlocal original_call_active
-                if event_type == "status-update":
-                    pass  # Could check for ended status
                 if event_type == "end-of-call-report":
                     print("[hybrid] Call ended")
                     call_active.clear()
-                    original_call_active = False
+                    # If Claude is still working, wait for it to finish
+                    if task_in_progress.is_set():
+                        print("[hybrid] Task still in progress — will call back when done")
+                        def wait_and_callback():
+                            task_in_progress.wait(timeout=60)
+                            time.sleep(2)  # Let the handler store the result
+                            # pending_result should now be set
+                        threading.Thread(target=wait_and_callback, daemon=True).start()
                 if event_type in ("assistant.started",):
                     print("[hybrid] Call started")
                     call_active.set()
-                    original_call_active = True
 
             app.state.on_webhook_event = on_webhook_event
 
             # Tool-call handler with hybrid support
+            task_in_progress = threading.Event()
+
             def handle_tool_call(task: str) -> str:
                 nonlocal session_id, first_run
                 print(f"\n[tool] Task: {task}")
+                task_in_progress.set()
                 instruction = clean_transcript(task)
                 print(f"[tool] Cleaned: {instruction}")
                 output, session_id = run_claude(instruction, session_id, session_name=session_name, is_first_run=first_run)
                 first_run = False
                 print(f"[tool] Claude output: {len(output)} chars")
+                task_in_progress.clear()
 
                 truncated = output[:2000] if len(output) > 2000 else output
 
@@ -376,7 +383,7 @@ def main():
                     # Call dropped while Claude was working — store result for callback
                     print("[hybrid] Call dropped during task — will call back")
                     pending_result["output"] = truncated
-                    return truncated  # Return anyway (VAPI won't use it, call is gone)
+                    return truncated
 
             app.state.tool_call_handler = handle_tool_call
 
@@ -395,7 +402,7 @@ def main():
                     time.sleep(1)
 
                     # Check if there's a pending result to call back with
-                    if pending_result["output"] and not call_active.is_set():
+                    if pending_result["output"] and not call_active.is_set() and not task_in_progress.is_set():
                         output = pending_result["output"]
                         pending_result["output"] = None
                         print(f"\n[hybrid] Calling back with result ({len(output)} chars)...")
