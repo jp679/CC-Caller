@@ -223,6 +223,8 @@ def main():
     parser.add_argument("--port", type=int, default=int(os.getenv("WEBHOOK_PORT", "8765")))
     args = parser.parse_args()
 
+    if args.live:
+        args.inbound = True  # --live implies inbound
     if not args.inbound and not args.instruction:
         parser.error("Either provide an instruction or use --inbound")
 
