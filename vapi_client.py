@@ -50,24 +50,8 @@ def build_assistant_config(
 
     return {
         "transcriber": {
-            "provider": "deepgram",
-            "model": "nova-3",
-            "language": "multi",
-            "smartFormat": True,
-            "keywords": [
-                "JSON", "API", "deploy", "compile", "compiling", "TypeScript",
-                "JavaScript", "Python", "React", "Vue", "Node", "npm", "git",
-                "commit", "push", "pull", "merge", "branch", "endpoint",
-                "webhook", "REST", "GraphQL", "SQL", "database", "schema",
-                "Docker", "Kubernetes", "AWS", "CI/CD", "pipeline", "lint",
-                "refactor", "debug", "localhost", "frontend", "backend",
-                "middleware", "component", "module", "package", "dependency",
-                "HTML", "CSS", "SCSS", "Tailwind", "Next.js", "Vite",
-                "FastAPI", "Flask", "Django", "Express", "MongoDB", "Postgres",
-                "Redis", "Cloudflare", "ngrok", "VAPI", "Gemini", "Claude",
-                "SIP", "WebRTC", "WebSocket", "OAuth", "JWT", "env",
-                "config", "build", "test", "spec", "mock", "async", "await",
-            ],
+            "provider": "openai",
+            "model": "gpt-4o-mini-transcribe",
         },
         "model": {
             "provider": "anthropic",
@@ -100,24 +84,8 @@ def build_assistant_config(
 def build_inbound_assistant_config(webhook_url: str) -> dict:
     return {
         "transcriber": {
-            "provider": "deepgram",
-            "model": "nova-3",
-            "language": "multi",
-            "smartFormat": True,
-            "keywords": [
-                "JSON", "API", "deploy", "compile", "compiling", "TypeScript",
-                "JavaScript", "Python", "React", "Vue", "Node", "npm", "git",
-                "commit", "push", "pull", "merge", "branch", "endpoint",
-                "webhook", "REST", "GraphQL", "SQL", "database", "schema",
-                "Docker", "Kubernetes", "AWS", "CI/CD", "pipeline", "lint",
-                "refactor", "debug", "localhost", "frontend", "backend",
-                "middleware", "component", "module", "package", "dependency",
-                "HTML", "CSS", "SCSS", "Tailwind", "Next.js", "Vite",
-                "FastAPI", "Flask", "Django", "Express", "MongoDB", "Postgres",
-                "Redis", "Cloudflare", "ngrok", "VAPI", "Gemini", "Claude",
-                "SIP", "WebRTC", "WebSocket", "OAuth", "JWT", "env",
-                "config", "build", "test", "spec", "mock", "async", "await",
-            ],
+            "provider": "openai",
+            "model": "gpt-4o-mini-transcribe",
         },
         "model": {
             "provider": "anthropic",
