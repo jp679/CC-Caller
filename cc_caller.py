@@ -427,20 +427,7 @@ def main():
                             url=sip_uri,
                         )
 
-                        # Try phone callback if available
-                        if phone_number_id and customer_number:
-                            try:
-                                create_call(
-                                    api_key=api_key,
-                                    phone_number_id=phone_number_id,
-                                    customer_number=customer_number,
-                                    assistant_config=callback_config,
-                                )
-                                print("[hybrid] Phone callback initiated")
-                            except Exception as e:
-                                print(f"[hybrid] Phone callback failed: {e}")
-
-                        print("[hybrid] Result ready — redial from Linphone or answer phone")
+                        print("[hybrid] Result ready — redial from Linphone")
 
                         # Restore persistent tool config for next inbound call
                         time.sleep(5)
