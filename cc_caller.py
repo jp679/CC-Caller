@@ -178,6 +178,7 @@ def main():
     parser.add_argument("--inbound", action="store_true", help="Wait for an inbound call instead of starting with an instruction")
     parser.add_argument("--web", action="store_true", help="Use VAPI web-based voice calls instead of phone")
     parser.add_argument("--gemini", action="store_true", help="Use Gemini Live for voice (free, no VAPI needed)")
+    parser.add_argument("--sip", action="store_true", help="Use SIP for inbound calls (native phone ring via Linphone/Zoiper)")
     parser.add_argument("--tunnel", choices=["cloudflare", "ngrok"], default="cloudflare", help="Tunnel provider (default: cloudflare, free)")
     parser.add_argument("--session-id", type=str, default="caller", help="Claude session ID (default: 'caller', persists across restarts)")
     parser.add_argument("--interval-minutes", type=int, default=15)
@@ -192,13 +193,17 @@ def main():
     api_key = os.getenv("VAPI_API_KEY", "")
     public_key = os.getenv("VAPI_PUBLIC_KEY", "")
     phone_number_id = os.getenv("VAPI_PHONE_NUMBER_ID", "")
+    sip_phone_number_id = os.getenv("VAPI_SIP_PHONE_NUMBER_ID", "")
     customer_number = os.getenv("USER_PHONE_NUMBER", "")
+    sip_uri = os.getenv("VAPI_SIP_URI", "sip:cc-caller@sip.vapi.ai")
 
     if args.gemini and not gemini_key:
         parser.error("--gemini requires GEMINI_API_KEY in .env")
+    if args.sip and not (api_key and sip_phone_number_id):
+        parser.error("--sip requires VAPI_API_KEY and VAPI_SIP_PHONE_NUMBER_ID in .env")
     if args.web and not public_key:
         parser.error("--web requires VAPI_PUBLIC_KEY in .env")
-    if not args.gemini and not args.web and not api_key:
+    if not args.gemini and not args.web and not args.sip and not api_key:
         parser.error("Phone mode requires VAPI_API_KEY in .env")
 
     # Start webhook server
@@ -258,6 +263,29 @@ def main():
         print(f"You said: {instruction}")
         if is_termination(instruction):
             print("Termination signal received. Exiting.")
+            cleanup_tunnel()
+            return
+
+    elif args.inbound and args.sip:
+        print("\n--- SIP inbound mode ---")
+        inbound_config = build_inbound_assistant_config(webhook_url)
+        configure_inbound_number(api_key, sip_phone_number_id, inbound_config)
+        print(f"Dial {sip_uri} from Linphone/Zoiper to start a task. Waiting...")
+        send_notification(
+            title="CC-Caller Ready",
+            message=f"Dial {sip_uri} from your SIP app",
+        )
+        try:
+            instruction = transcript_queue.get()
+        except KeyboardInterrupt:
+            print("\nInterrupted while waiting. Exiting.")
+            clear_inbound_number(api_key, sip_phone_number_id)
+            cleanup_tunnel()
+            return
+        print(f"You said: {instruction}")
+        if is_termination(instruction):
+            print("Termination signal received. Exiting.")
+            clear_inbound_number(api_key, sip_phone_number_id)
             cleanup_tunnel()
             return
 
@@ -359,6 +387,14 @@ def main():
                     message=summary_data["summary"][:200],
                     url=call_url,
                 )
+            elif args.sip:
+                print("Preparing SIP callback...")
+                configure_inbound_number(api_key, sip_phone_number_id, assistant_config)
+                print(f"Dial {sip_uri} for the update")
+                send_notification(
+                    title="CC-Caller Update",
+                    message=summary_data["summary"][:200],
+                )
             elif args.web:
                 print("Preparing web call...")
                 with app.state.web_call_lock:
@@ -394,6 +430,11 @@ def main():
                         message="Tap to connect",
                         url=f"{public_url}/call-gemini",
                     )
+                elif args.sip:
+                    send_notification(
+                        title="CC-Caller: Still waiting",
+                        message=f"Dial {sip_uri}",
+                    )
                 elif args.web:
                     send_notification(
                         title="CC-Caller: Still waiting",
@@ -424,12 +465,17 @@ def main():
     except KeyboardInterrupt:
         print("\nInterrupted. Exiting.")
     finally:
-        if args.inbound:
+        if args.inbound or args.sip:
             print("Clearing inbound config...")
             try:
                 clear_inbound_number(api_key, phone_number_id)
             except Exception:
                 pass
+            if args.sip:
+                try:
+                    clear_inbound_number(api_key, sip_phone_number_id)
+                except Exception:
+                    pass
         cleanup_tunnel()
 
 
