@@ -1,13 +1,19 @@
+import asyncio
+import json as json_module
 import queue
 import threading
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
+from starlette.responses import StreamingResponse
 
 
 def create_app(transcript_queue: queue.Queue) -> FastAPI:
     app = FastAPI()
     app.state.pending_web_call = None
     app.state.web_call_lock = threading.Lock()
+    # SSE for live mode
+    app.state.live_sse_queue = queue.Queue()
+    app.state.live_gemini_config = None
 
     @app.get("/webhook")
     async def webhook_health():
@@ -557,6 +563,356 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
   document.getElementById('end').onclick = function() {{
     if (vapi) vapi.stop();
   }};
+
+  function log(msg) {{
+    document.getElementById('log').innerHTML = '<p>' + msg + '</p>' + document.getElementById('log').innerHTML;
+  }}
+</script>
+</body></html>""")
+
+    # --- Live mode SSE + page ---
+
+    @app.get("/live-stream")
+    async def live_stream():
+        async def event_generator():
+            while True:
+                try:
+                    msg = app.state.live_sse_queue.get_nowait()
+                    yield f"data: {json_module.dumps(msg)}\n\n"
+                except queue.Empty:
+                    await asyncio.sleep(0.5)
+                    yield ": keepalive\n\n"
+        return StreamingResponse(event_generator(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    @app.get("/live-config")
+    async def live_config():
+        gc = app.state.live_gemini_config
+        if not gc:
+            return {"ready": False}
+        return {**gc, "ready": True}
+
+    @app.get("/call-gemini-live", response_class=HTMLResponse)
+    async def gemini_live_page():
+        gc = app.state.live_gemini_config
+        gemini_key = gc.get("geminiKey", "") if gc else ""
+        model = gc.get("model", "gemini-3.1-flash-live-preview") if gc else "gemini-3.1-flash-live-preview"
+        system_prompt = gc.get("systemPrompt", "") if gc else ""
+
+        return HTMLResponse(f"""<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CC-Caller Live</title>
+<style>
+  body {{ font-family: -apple-system, sans-serif; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; min-height: 100vh; margin: 0;
+    background: #0a0a0a; color: #fff; }}
+  #status {{ font-size: 1.5em; margin: 20px; text-align: center; }}
+  .pulse {{ animation: pulse 2s infinite; }}
+  @keyframes pulse {{ 0%,100%{{ opacity:1 }} 50%{{ opacity:0.5 }} }}
+  button {{ padding: 16px 32px; font-size: 1.2em; border: none; border-radius: 12px;
+    cursor: pointer; margin: 10px; }}
+  #connect {{ background: #22c55e; color: white; }}
+  #end {{ background: #ef4444; color: white; display: none; }}
+</style>
+</head><body>
+<h1>CC-Caller <span style="font-size:0.5em;opacity:0.6">Live</span></h1>
+<p id="status">Tap Connect to start a live session</p>
+<button id="connect">Connect</button>
+<button id="end">End Session</button>
+<div id="log" style="margin-top:20px;font-size:0.9em;opacity:0.7;max-width:90vw;text-align:center"></div>
+
+<script>
+  const GEMINI_KEY = "{gemini_key}";
+  const MODEL = "{model}";
+  const SYSTEM_PROMPT = "You are the voice interface for a coding assistant. The user is talking to you directly — you ARE the assistant.\\n" +
+    "Rules:\\n" +
+    "- When the user gives a task, say 'On it.' and nothing else.\\n" +
+    "- When you receive a text message starting with [PROGRESS], read it briefly to the user.\\n" +
+    "- When you receive a text message starting with [RESULT], read the key points to the user conversationally. Be concise. Then ask what they'd like to do next.\\n" +
+    "- Speak as 'I'. Never refer to 'the agent' or 'the coding assistant'.\\n" +
+    "- If the user says 'end session' or 'we are done', say 'Ending session, goodbye.' and stop.\\n" +
+    "Always respond in English. Keep responses short.";
+
+  let ws = null;
+  let audioCtx = null;
+  let micStream = null;
+  let processor = null;
+  let userMessages = [];
+  let isConnected = false;
+  let playQueue = [];
+  let isPlaying = false;
+  let currentSource = null;
+  let sse = null;
+  let idleTimer = null;
+  const IDLE_TIMEOUT = 2 * 60 * 60 * 1000; // 2 hours
+
+  // Transcript batching
+  let userBuf = '';
+  let agentBuf = '';
+  let userTimer = null;
+  let agentTimer = null;
+  let userSendTimer = null;
+
+  function flushUser() {{
+    if (userBuf.trim()) {{
+      log('You: ' + userBuf.trim());
+      userMessages.push(userBuf.trim());
+    }}
+    userBuf = '';
+    userTimer = null;
+  }}
+  function flushAgent() {{
+    if (agentBuf.trim()) log('Agent: ' + agentBuf.trim());
+    agentBuf = '';
+    agentTimer = null;
+  }}
+
+  function resetIdleTimer() {{
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {{
+      log('Idle timeout — disconnecting');
+      endSession();
+    }}, IDLE_TIMEOUT);
+  }}
+
+  document.getElementById('connect').onclick = async function() {{
+    document.getElementById('status').textContent = 'Connecting...';
+    document.getElementById('status').className = 'pulse';
+    document.getElementById('connect').style.display = 'none';
+    userMessages = [];
+
+    try {{
+      const url = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=' + GEMINI_KEY;
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {{
+        ws.send(JSON.stringify({{
+          setup: {{
+            model: 'models/' + MODEL,
+            generationConfig: {{
+              responseModalities: ['AUDIO'],
+              speechConfig: {{ voiceConfig: {{ prebuiltVoiceConfig: {{ voiceName: 'Kore' }} }} }}
+            }},
+            systemInstruction: {{ parts: [{{ text: SYSTEM_PROMPT }}] }},
+            tools: [{{ functionDeclarations: [{{
+              name: 'endCall',
+              description: 'End the session when user says end session or we are done.'
+            }}] }}],
+            inputAudioTranscription: {{}},
+            outputAudioTranscription: {{}}
+          }}
+        }}));
+      }};
+
+      ws.onmessage = async (event) => {{
+        let raw = event.data;
+        if (raw instanceof Blob) raw = await raw.text();
+        let msg;
+        try {{ msg = JSON.parse(raw); }} catch(e) {{ return; }}
+
+        if (msg.setupComplete !== undefined) {{
+          log('Connected — live session active');
+          isConnected = true;
+          document.getElementById('status').textContent = 'Live — speak anytime';
+          document.getElementById('status').className = '';
+          document.getElementById('end').style.display = 'inline-block';
+          startMic();
+          startSSE();
+          resetIdleTimer();
+          return;
+        }}
+
+        if (msg.toolCall) {{
+          const fc = msg.toolCall.functionCalls;
+          if (fc) {{
+            for (const call of fc) {{
+              if (call.name === 'endCall') {{
+                ws.send(JSON.stringify({{
+                  toolResponse: {{
+                    functionResponses: [{{ id: call.id, name: 'endCall', response: {{ result: 'ok' }} }}]
+                  }}
+                }}));
+                setTimeout(() => endSession(), 2000);
+                return;
+              }}
+            }}
+          }}
+        }}
+
+        if (msg.serverContent) {{
+          const sc = msg.serverContent;
+
+          if (sc.turnComplete) playQueue = [];
+
+          if (sc.inputTranscription && sc.inputTranscription.text) {{
+            stopPlayback();
+            flushAgent();
+            userBuf += ' ' + sc.inputTranscription.text;
+            if (userTimer) clearTimeout(userTimer);
+            userTimer = setTimeout(flushUser, 1000);
+            resetIdleTimer();
+
+            // Send transcript after 2s of silence
+            if (userSendTimer) clearTimeout(userSendTimer);
+            userSendTimer = setTimeout(sendTranscript, 2000);
+
+            // End detection
+            const lower = userBuf.toLowerCase();
+            const endPhrases = ['end session', "we're done", 'done for now', 'stop session'];
+            if (endPhrases.some(p => lower.includes(p))) {{
+              setTimeout(() => endSession(), 3000);
+            }}
+          }}
+
+          if (sc.outputTranscription && sc.outputTranscription.text) {{
+            flushUser();
+            agentBuf += ' ' + sc.outputTranscription.text;
+            if (agentTimer) clearTimeout(agentTimer);
+            agentTimer = setTimeout(flushAgent, 1000);
+
+            if (agentBuf.toLowerCase().includes('ending session')) {{
+              setTimeout(() => endSession(), 3000);
+            }}
+          }}
+
+          if (sc.modelTurn && sc.modelTurn.parts) {{
+            for (const part of sc.modelTurn.parts) {{
+              if (part.inlineData && part.inlineData.data) {{
+                playQueue.push(part.inlineData.data);
+                if (!isPlaying) playNext();
+              }}
+            }}
+          }}
+        }}
+      }};
+
+      ws.onerror = () => {{ log('Connection error'); }};
+      ws.onclose = () => {{
+        isConnected = false;
+        stopMic();
+        stopSSE();
+        flushUser();
+        flushAgent();
+        document.getElementById('status').textContent = 'Session ended';
+        document.getElementById('end').style.display = 'none';
+        document.getElementById('connect').style.display = 'inline-block';
+      }};
+
+    }} catch(e) {{
+      log('Failed: ' + e.message);
+      document.getElementById('status').textContent = 'Failed';
+      document.getElementById('connect').style.display = 'inline-block';
+    }}
+  }};
+
+  document.getElementById('end').onclick = () => endSession();
+
+  function endSession() {{
+    stopMic();
+    stopSSE();
+    flushUser();
+    flushAgent();
+    sendTranscript();
+    if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+    isConnected = false;
+    if (idleTimer) clearTimeout(idleTimer);
+  }}
+
+  // --- SSE listener ---
+  function startSSE() {{
+    sse = new EventSource('/live-stream');
+    sse.onmessage = (event) => {{
+      const data = JSON.parse(event.data);
+      if (data.type === 'progress' && ws && ws.readyState === WebSocket.OPEN) {{
+        ws.send(JSON.stringify({{
+          clientContent: {{ turns: [{{ role: 'user', parts: [{{ text: '[PROGRESS] ' + data.message }}] }}], turnComplete: true }}
+        }}));
+      }}
+      if (data.type === 'result' && ws && ws.readyState === WebSocket.OPEN) {{
+        ws.send(JSON.stringify({{
+          clientContent: {{ turns: [{{ role: 'user', parts: [{{ text: '[RESULT] ' + data.message }}] }}], turnComplete: true }}
+        }}));
+      }}
+    }};
+  }}
+
+  function stopSSE() {{
+    if (sse) {{ sse.close(); sse = null; }}
+  }}
+
+  async function sendTranscript() {{
+    if (userMessages.length === 0) return;
+    const msgs = [...userMessages];
+    userMessages = [];
+    try {{
+      await fetch('/gemini-transcript', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify({{ userMessages: msgs }})
+      }});
+    }} catch(e) {{}}
+  }}
+
+  // --- Microphone ---
+  async function startMic() {{
+    micStream = await navigator.mediaDevices.getUserMedia({{ audio: {{ sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true }} }});
+    audioCtx = new AudioContext({{ sampleRate: 16000 }});
+    const source = audioCtx.createMediaStreamSource(micStream);
+    processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    processor.onaudioprocess = (e) => {{
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const float32 = e.inputBuffer.getChannelData(0);
+      const int16 = new Int16Array(float32.length);
+      for (let i = 0; i < float32.length; i++) int16[i] = Math.max(-1, Math.min(1, float32[i])) * 0x7FFF;
+      const bytes = new Uint8Array(int16.buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      ws.send(JSON.stringify({{ realtimeInput: {{ audio: {{ data: btoa(binary), mimeType: 'audio/pcm;rate=16000' }} }} }}));
+    }};
+    source.connect(processor);
+    processor.connect(audioCtx.destination);
+  }}
+
+  function stopMic() {{
+    if (processor) {{ processor.disconnect(); processor = null; }}
+    if (micStream) {{ micStream.getTracks().forEach(t => t.stop()); micStream = null; }}
+  }}
+
+  // --- Audio playback ---
+  let playCtx = null;
+  function getPlayCtx() {{
+    if (!playCtx) playCtx = new (window.AudioContext || window.webkitAudioContext)({{ sampleRate: 24000 }});
+    if (playCtx.state === 'suspended') playCtx.resume();
+    return playCtx;
+  }}
+
+  function stopPlayback() {{
+    playQueue = [];
+    isPlaying = false;
+    if (currentSource) {{ try {{ currentSource.stop(); }} catch(e) {{}} currentSource = null; }}
+  }}
+
+  function playNext() {{
+    if (playQueue.length === 0) {{ isPlaying = false; currentSource = null; return; }}
+    isPlaying = true;
+    const b64 = playQueue.shift();
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const int16 = new Int16Array(bytes.buffer);
+    const float32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 0x7FFF;
+    const ctx = getPlayCtx();
+    const buf = ctx.createBuffer(1, float32.length, 24000);
+    buf.getChannelData(0).set(float32);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    currentSource = src;
+    src.onended = () => {{ currentSource = null; playNext(); }};
+    src.start();
+  }}
 
   function log(msg) {{
     document.getElementById('log').innerHTML = '<p>' + msg + '</p>' + document.getElementById('log').innerHTML;

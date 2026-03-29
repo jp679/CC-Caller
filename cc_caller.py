@@ -214,6 +214,7 @@ def main():
     parser.add_argument("--inbound", action="store_true", help="Wait for an inbound call instead of starting with an instruction")
     parser.add_argument("--web", action="store_true", help="Use VAPI web-based voice calls instead of phone")
     parser.add_argument("--gemini", action="store_true", help="Use Gemini Live for voice (free, no VAPI needed)")
+    parser.add_argument("--live", action="store_true", help="Persistent Gemini voice session — no hang-up/call-back loop")
     parser.add_argument("--sip", action="store_true", help="Use SIP for inbound calls (native phone ring via Linphone/Zoiper)")
     parser.add_argument("--tunnel", choices=["cloudflare", "ngrok"], default="cloudflare", help="Tunnel provider (default: cloudflare, free)")
     parser.add_argument("--session-id", type=str, default="caller", help="Claude session ID (default: 'caller', persists across restarts)")
@@ -283,8 +284,78 @@ def main():
         print(f"Claude session: {session_name} ({session_id})")
     instruction = args.instruction
     last_call_time = 0.0
+    first_run = True
 
-    if args.inbound and args.gemini:
+    if args.live:
+        print("\n--- Live mode (persistent Gemini session) ---")
+        gemini_key = os.getenv("GEMINI_API_KEY", "")
+        if not gemini_key:
+            print("ERROR: --live requires GEMINI_API_KEY in .env")
+            cleanup_tunnel()
+            return
+
+        with app.state.web_call_lock:
+            app.state.live_gemini_config = {
+                "geminiKey": gemini_key,
+                "model": "gemini-3.1-flash-live-preview",
+            }
+        call_url = f"{public_url}/call-gemini-live"
+        print(f"Open {call_url} to start a live session")
+        send_notification(
+            title="CC-Caller Live Ready",
+            message="Tap to start a live voice session",
+            url=call_url,
+        )
+
+        # Live loop: wait for transcript → run claude → push result via SSE → repeat
+        try:
+            while True:
+                print("\nWaiting for your voice input...")
+                try:
+                    transcript = transcript_queue.get(timeout=7200)  # 2hr timeout
+                except queue.Empty:
+                    print("Session idle timeout. Exiting.")
+                    break
+
+                print(f"Raw transcript: {transcript}")
+
+                if is_termination(transcript):
+                    print("Termination signal received. Exiting.")
+                    break
+
+                print("Cleaning transcript...")
+                instruction = clean_transcript(transcript)
+                print(f"Instruction: {instruction}")
+
+                # Push progress updates while Claude works
+                progress_stop = threading.Event()
+                def push_progress():
+                    while not progress_stop.is_set():
+                        progress_stop.wait(15)
+                        if not progress_stop.is_set():
+                            app.state.live_sse_queue.put({"type": "progress", "message": "Still working on that..."})
+                            print("  [progress ping]")
+
+                progress_thread = threading.Thread(target=push_progress, daemon=True)
+                progress_thread.start()
+
+                print("--- Running Claude ---")
+                output, session_id = run_claude(instruction, session_id, session_name=session_name, is_first_run=first_run)
+                first_run = False
+                progress_stop.set()
+                print(f"Output length: {len(output)} chars")
+
+                # Push result to Gemini via SSE
+                app.state.live_sse_queue.put({"type": "result", "message": output})
+                print("Result pushed to live session")
+
+        except KeyboardInterrupt:
+            print("\nInterrupted. Exiting.")
+        finally:
+            cleanup_tunnel()
+        return
+
+    elif args.inbound and args.gemini:
         print("\n--- Gemini Live inbound mode ---")
         gemini_system = (
             "You are a task intake assistant for a coding agent.\n"
@@ -396,7 +467,6 @@ def main():
         instruction = clean_transcript(instruction)
         print(f"Instruction: {instruction}")
 
-    first_run = True
     try:
         while True:
             print(f"\n--- Running Claude ---")

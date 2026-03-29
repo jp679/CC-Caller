@@ -15,7 +15,7 @@ def test_build_assistant_config_includes_summary_and_detail():
     system_content = config["model"]["messages"][0]["content"]
     assert "I fixed the auth bug. What next?" in system_content
     assert "Changed login.py lines 42-58" in system_content
-    assert config["model"]["provider"] == "anthropic"
+    assert config["model"]["provider"] == "openai"
     assert config["voice"]["provider"] == "11labs"
     assert {"type": "endCall"} in config["model"]["tools"]
     assert config["backgroundSound"] == "off"
