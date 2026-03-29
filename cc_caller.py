@@ -215,6 +215,7 @@ def main():
     parser.add_argument("--web", action="store_true", help="Use VAPI web-based voice calls instead of phone")
     parser.add_argument("--gemini", action="store_true", help="Use Gemini Live for voice (free, no VAPI needed)")
     parser.add_argument("--live", action="store_true", help="Persistent Gemini voice session — no hang-up/call-back loop")
+    parser.add_argument("--livekit", action="store_true", help="LiveKit + Gemini persistent session — server-side, SIP + browser")
     parser.add_argument("--sip", action="store_true", help="Use SIP for inbound calls (native phone ring via Linphone/Zoiper)")
     parser.add_argument("--tunnel", choices=["cloudflare", "ngrok"], default="cloudflare", help="Tunnel provider (default: cloudflare, free)")
     parser.add_argument("--session-id", type=str, default="caller", help="Claude session ID (default: 'caller', persists across restarts)")
@@ -223,8 +224,8 @@ def main():
     parser.add_argument("--port", type=int, default=int(os.getenv("WEBHOOK_PORT", "8765")))
     args = parser.parse_args()
 
-    if args.live:
-        args.inbound = True  # --live implies inbound
+    if args.live or args.livekit:
+        args.inbound = True  # --live/--livekit imply inbound
     if not args.inbound and not args.instruction:
         parser.error("Either provide an instruction or use --inbound")
 
@@ -288,7 +289,131 @@ def main():
     last_call_time = 0.0
     first_run = True
 
-    if args.live:
+    if args.livekit:
+        import asyncio as aio
+        from livekit import rtc
+        from livekit_agent import CCCallerAgent
+        from livekit_server import create_room, delete_room, generate_participant_token
+
+        gemini_key = os.getenv("GEMINI_API_KEY", "")
+        livekit_url = os.environ["LIVEKIT_URL"]
+        livekit_api_key = os.environ["LIVEKIT_API_KEY"]
+        livekit_api_secret = os.environ["LIVEKIT_API_SECRET"]
+
+        if not gemini_key:
+            print("ERROR: --livekit requires GEMINI_API_KEY")
+            return
+
+        room_name = "cc-caller"
+        system_prompt = (
+            "You are a voice relay between a user and a coding agent that runs in the background.\n"
+            "You do NOT write code or answer technical questions yourself. You are a messenger.\n"
+            "Your job:\n"
+            "1) Collect what the user says.\n"
+            "2) When the user gives a task, say 'Sending that to the agent now.' and wait.\n"
+            "3) When you are told to say something, read it to the user exactly.\n"
+            "4) After reading a response, ask 'What would you like to do next?'\n"
+            "5) If the user asks a coding question, say 'Let me ask the agent.'\n"
+            "6) If the user says 'end session', say 'Ending session.' and stop.\n"
+            "NEVER make up information about code or the project.\n"
+            "Always respond in English. Keep responses short."
+        )
+
+        agent = CCCallerAgent(
+            transcript_queue=transcript_queue,
+            gemini_api_key=gemini_key,
+            system_prompt=system_prompt,
+        )
+
+        async def run_livekit():
+            # Create room
+            print(f"Creating LiveKit room: {room_name}")
+            await create_room(room_name)
+
+            # Generate browser join token
+            user_token = generate_participant_token(room_name, "user")
+            call_url = f"{public_url}/call-livekit?token={user_token}&url={livekit_url}"
+            print(f"Browser join: {call_url}")
+            send_notification(
+                title="CC-Caller LiveKit Ready",
+                message="Tap to join voice session",
+                url=call_url,
+            )
+
+            # Connect agent to room
+            agent_token = generate_participant_token(room_name, "agent")
+            room = rtc.Room()
+            await room.connect(livekit_url, agent_token)
+            print("Agent connected to room")
+
+            # Run agent
+            try:
+                await agent.run(room)
+            finally:
+                await room.disconnect()
+                await delete_room(room_name)
+
+        # Run LiveKit agent in a thread
+        def start_agent():
+            loop = aio.new_event_loop()
+            aio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(run_livekit())
+            except Exception as e:
+                print(f"Agent error: {e}")
+
+        agent_thread = threading.Thread(target=start_agent, daemon=True)
+        agent_thread.start()
+
+        # Main loop: wait for transcripts, run Claude, inject results
+        try:
+            while True:
+                print("\nWaiting for your voice input...")
+                try:
+                    transcript = transcript_queue.get(timeout=7200)
+                except queue.Empty:
+                    print("Session idle timeout.")
+                    break
+
+                print(f"Raw transcript: {transcript}")
+
+                if is_termination(transcript):
+                    print("Termination signal received.")
+                    break
+
+                print("Cleaning transcript...")
+                instruction = clean_transcript(transcript)
+                print(f"Instruction: {instruction}")
+
+                # Progress pings while Claude works
+                progress_stop = threading.Event()
+                def push_progress():
+                    while not progress_stop.is_set():
+                        progress_stop.wait(15)
+                        if not progress_stop.is_set():
+                            agent.inject_text("Still working on that...")
+                            print("  [progress ping]")
+
+                progress_thread = threading.Thread(target=push_progress, daemon=True)
+                progress_thread.start()
+
+                print("--- Running Claude ---")
+                output, session_id = run_claude(instruction, session_id, session_name=session_name, is_first_run=first_run)
+                first_run = False
+                progress_stop.set()
+                print(f"Output length: {len(output)} chars")
+
+                # Inject result into Gemini conversation
+                agent.inject_text(f"Here is what was done: {output}. What would you like to do next?")
+                print("Result injected into LiveKit session")
+
+        except KeyboardInterrupt:
+            print("\nInterrupted.")
+        finally:
+            cleanup_tunnel()
+        return
+
+    elif args.live:
         print("\n--- Live mode (persistent Gemini session) ---")
         gemini_key = os.getenv("GEMINI_API_KEY", "")
         if not gemini_key:
