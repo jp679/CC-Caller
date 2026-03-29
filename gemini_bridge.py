@@ -64,10 +64,18 @@ class GeminiBridge:
                     "generationConfig": {
                         "responseModalities": ["AUDIO"],
                         "temperature": 0.1,
+                        "topP": 0.1,
                         "speechConfig": {
                             "voiceConfig": {
                                 "prebuiltVoiceConfig": {"voiceName": "Kore"}
                             }
+                        }
+                    },
+                    "realtimeInputConfig": {
+                        "automaticActivityDetection": {
+                            "endOfSpeechSensitivity": "LOW",
+                            "silenceDurationMs": 2000,
+                            "prefixPaddingMs": 500
                         }
                     },
                     "systemInstruction": {
