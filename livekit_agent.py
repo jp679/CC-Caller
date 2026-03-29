@@ -1,98 +1,94 @@
 """LiveKit + Gemini Live agent for CC-Caller.
 
-Joins a LiveKit room, uses Gemini Live for voice, and communicates
-with the cc-caller orchestrator via queues.
+Uses LiveKit's proper agent dispatch pattern for reliable audio routing.
+Communicates with cc-caller via shared queues.
 """
 
 import asyncio
 import logging
 import os
 import queue
-import threading
+import sys
 from typing import Optional
 
 # Monkey-patch LiveKit plugin BEFORE importing google plugin
 import livekit_patch  # noqa: F401
 
-from livekit import rtc
-from livekit.agents import AgentSession, Agent, RoomInputOptions
-from livekit.agents.voice import MetricsCollectedEvent
+from livekit.agents import (
+    Agent,
+    AgentSession,
+    WorkerOptions,
+    WorkerType,
+    JobContext,
+    cli,
+)
 from livekit.plugins import google
 
 logger = logging.getLogger("cc-caller-agent")
 
+# Shared state between agent and cc-caller (set from cc_caller.py)
+transcript_queue: Optional[queue.Queue] = None
+inject_fn = None  # Will be set to a function that injects text
 
-class CCCallerAgent:
-    """Wraps the LiveKit Gemini agent with queues for cc-caller integration."""
 
-    def __init__(
-        self,
-        transcript_queue: queue.Queue,
-        gemini_api_key: str,
-        system_prompt: str,
-    ):
-        self.transcript_queue = transcript_queue
-        self.gemini_api_key = gemini_api_key
-        self.system_prompt = system_prompt
-        self._inject_queue: Optional[asyncio.Queue] = None
-        self._session: Optional[AgentSession] = None
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+SYSTEM_PROMPT = (
+    "You are a voice relay between a user and a coding agent that runs in the background.\n"
+    "You do NOT write code or answer technical questions yourself. You are a messenger.\n"
+    "Your job:\n"
+    "1) Collect what the user says.\n"
+    "2) When the user gives a task, say 'Sending that to the agent now.' and wait.\n"
+    "3) When you are told to say something, read it to the user exactly.\n"
+    "4) After reading a response, ask 'What would you like to do next?'\n"
+    "5) If the user asks a coding question, say 'Let me ask the agent.'\n"
+    "6) If the user says 'end session', say 'Ending session.' and stop.\n"
+    "NEVER make up information about code or the project.\n"
+    "Always respond in English. Keep responses short."
+)
 
-    def inject_text(self, text: str) -> None:
-        """Thread-safe: inject text into the Gemini conversation."""
-        if self._loop and self._inject_queue:
-            self._loop.call_soon_threadsafe(self._inject_queue.put_nowait, text)
 
-    async def _injection_loop(self):
-        """Background task: reads from inject queue, sends to Gemini."""
-        while True:
-            text = await self._inject_queue.get()
-            if self._session:
-                try:
-                    await self._session.say(text, allow_interruptions=True)
-                except Exception as e:
-                    logger.error(f"Injection error: {e}")
+async def entrypoint(ctx: JobContext):
+    """Called by LiveKit when a user joins the room."""
+    global inject_fn
 
-    async def run(self, room: rtc.Room):
-        """Main agent loop — called after joining the room."""
-        self._loop = asyncio.get_running_loop()
-        self._inject_queue = asyncio.Queue()
+    await ctx.connect()
+    logger.info("Agent connected to room, waiting for participant...")
 
-        model = google.realtime.RealtimeModel(
-            model="gemini-2.5-flash-native-audio-preview-12-2025",
-            api_key=self.gemini_api_key,
-            voice="Kore",
-            temperature=0.7,
-            instructions=self.system_prompt,
-        )
+    model = google.realtime.RealtimeModel(
+        model="gemini-2.5-flash-native-audio-preview-12-2025",
+        api_key=os.environ.get("GEMINI_API_KEY", ""),
+        voice="Kore",
+        temperature=0.7,
+        instructions=SYSTEM_PROMPT,
+    )
 
-        self._session = AgentSession(llm=model)
+    session = AgentSession(llm=model)
 
-        # Listen for final transcripts from the user
-        @self._session.on("user_input_transcribed")
-        def on_transcript(text: str):
-            if text.strip():
-                logger.info(f"User said: {text}")
-                self.transcript_queue.put(text)
+    # Capture transcripts
+    @session.on("user_input_transcribed")
+    def on_transcript(ev):
+        text = ev.transcript if hasattr(ev, 'transcript') else str(ev)
+        if text.strip() and transcript_queue:
+            logger.info(f"User said: {text}")
+            transcript_queue.put(text)
 
-        # Start injection loop
-        asyncio.create_task(self._injection_loop())
+    # Set up injection function
+    async def _say(text: str):
+        await session.say(text, allow_interruptions=True)
 
-        # Start the session
-        await self._session.start(
-            room=room,
-            agent=Agent(instructions=self.system_prompt),
-        )
+    inject_fn = lambda text: asyncio.run_coroutine_threadsafe(_say(text), asyncio.get_event_loop())
 
-        # Keep running until room closes
-        disconnect_event = asyncio.Event()
+    agent = Agent(instructions=SYSTEM_PROMPT)
+    await session.start(room=ctx.room, agent=agent)
+    logger.info("Agent session started")
 
-        @room.on("disconnected")
-        def on_disconnect():
-            disconnect_event.set()
 
-        await disconnect_event.wait()
-
-    async def close(self):
-        if self._session:
-            await self._session.close()
+def run_worker():
+    """Start the LiveKit agent worker."""
+    opts = WorkerOptions(
+        entrypoint_fnc=entrypoint,
+        worker_type=WorkerType.ROOM,
+        api_key=os.environ["LIVEKIT_API_KEY"],
+        api_secret=os.environ["LIVEKIT_API_SECRET"],
+        ws_url=os.environ["LIVEKIT_URL"],
+    )
+    cli.run_app(opts)

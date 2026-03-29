@@ -291,79 +291,43 @@ def main():
 
     if args.livekit:
         import asyncio as aio
-        from livekit import rtc
-        from livekit_agent import CCCallerAgent
-        from livekit_server import create_room, delete_room, generate_participant_token
+        import livekit_agent
+        from livekit_server import create_room, generate_participant_token
 
         gemini_key = os.getenv("GEMINI_API_KEY", "")
         livekit_url = os.environ["LIVEKIT_URL"]
-        livekit_api_key = os.environ["LIVEKIT_API_KEY"]
-        livekit_api_secret = os.environ["LIVEKIT_API_SECRET"]
 
         if not gemini_key:
             print("ERROR: --livekit requires GEMINI_API_KEY")
             return
 
         room_name = "cc-caller"
-        system_prompt = (
-            "You are a voice relay between a user and a coding agent that runs in the background.\n"
-            "You do NOT write code or answer technical questions yourself. You are a messenger.\n"
-            "Your job:\n"
-            "1) Collect what the user says.\n"
-            "2) When the user gives a task, say 'Sending that to the agent now.' and wait.\n"
-            "3) When you are told to say something, read it to the user exactly.\n"
-            "4) After reading a response, ask 'What would you like to do next?'\n"
-            "5) If the user asks a coding question, say 'Let me ask the agent.'\n"
-            "6) If the user says 'end session', say 'Ending session.' and stop.\n"
-            "NEVER make up information about code or the project.\n"
-            "Always respond in English. Keep responses short."
+
+        # Set shared queue on the agent module
+        livekit_agent.transcript_queue = transcript_queue
+
+        # Create room and generate join token
+        loop = aio.new_event_loop()
+        room_info = loop.run_until_complete(create_room(room_name))
+        print(f"LiveKit room created: {room_info}")
+
+        user_token = generate_participant_token(room_name, "user")
+        call_url = f"{public_url}/call-livekit?token={user_token}&url={livekit_url}"
+        print(f"Browser join: {call_url}")
+        send_notification(
+            title="CC-Caller LiveKit Ready",
+            message="Tap to join voice session",
+            url=call_url,
         )
+        loop.close()
 
-        agent = CCCallerAgent(
-            transcript_queue=transcript_queue,
-            gemini_api_key=gemini_key,
-            system_prompt=system_prompt,
-        )
+        # Start the LiveKit agent worker in a background thread
+        def start_worker():
+            livekit_agent.run_worker()
 
-        async def run_livekit():
-            # Create room
-            print(f"Creating LiveKit room: {room_name}")
-            await create_room(room_name)
-
-            # Generate browser join token
-            user_token = generate_participant_token(room_name, "user")
-            call_url = f"{public_url}/call-livekit?token={user_token}&url={livekit_url}"
-            print(f"Browser join: {call_url}")
-            send_notification(
-                title="CC-Caller LiveKit Ready",
-                message="Tap to join voice session",
-                url=call_url,
-            )
-
-            # Connect agent to room
-            agent_token = generate_participant_token(room_name, "agent")
-            room = rtc.Room()
-            await room.connect(livekit_url, agent_token)
-            print("Agent connected to room")
-
-            # Run agent
-            try:
-                await agent.run(room)
-            finally:
-                await room.disconnect()
-                await delete_room(room_name)
-
-        # Run LiveKit agent in a thread
-        def start_agent():
-            loop = aio.new_event_loop()
-            aio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(run_livekit())
-            except Exception as e:
-                print(f"Agent error: {e}")
-
-        agent_thread = threading.Thread(target=start_agent, daemon=True)
+        agent_thread = threading.Thread(target=start_worker, daemon=True)
         agent_thread.start()
+        print("LiveKit agent worker started")
 
         # Main loop: wait for transcripts, run Claude, inject results
         try:
@@ -390,8 +354,8 @@ def main():
                 def push_progress():
                     while not progress_stop.is_set():
                         progress_stop.wait(15)
-                        if not progress_stop.is_set():
-                            agent.inject_text("Still working on that...")
+                        if not progress_stop.is_set() and livekit_agent.inject_fn:
+                            livekit_agent.inject_fn("Still working on that...")
                             print("  [progress ping]")
 
                 progress_thread = threading.Thread(target=push_progress, daemon=True)
@@ -404,8 +368,11 @@ def main():
                 print(f"Output length: {len(output)} chars")
 
                 # Inject result into Gemini conversation
-                agent.inject_text(f"Here is what was done: {output}. What would you like to do next?")
-                print("Result injected into LiveKit session")
+                if livekit_agent.inject_fn:
+                    livekit_agent.inject_fn(f"Here is what was done: {output}. What would you like to do next?")
+                    print("Result injected into LiveKit session")
+                else:
+                    print("WARNING: inject_fn not available, agent may not be connected")
 
         except KeyboardInterrupt:
             print("\nInterrupted.")
