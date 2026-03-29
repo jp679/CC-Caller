@@ -583,7 +583,8 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
                     await asyncio.sleep(0.5)
                     yield ": keepalive\n\n"
         return StreamingResponse(event_generator(), media_type="text/event-stream",
-                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                                          "Connection": "keep-alive", "Transfer-Encoding": "chunked"})
 
     @app.get("/live-config")
     async def live_config():
@@ -840,21 +841,30 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
   function startSSE() {{
     sse = new EventSource('/live-stream');
     sse.onmessage = (event) => {{
-      const data = JSON.parse(event.data);
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      if (data.type === 'progress') {{
-        log('[progress] ' + data.message);
-        ws.send(JSON.stringify({{
-          realtimeInput: {{ text: '[PROGRESS] ' + data.message }}
-        }}));
-      }}
-      if (data.type === 'result') {{
-        log('[result received]');
-        ws.send(JSON.stringify({{
-          realtimeInput: {{ text: '[RESULT] Here is what was done: ' + data.message + '. Please read the key points to the user and ask what they would like to do next.' }}
-        }}));
+      try {{
+        const data = JSON.parse(event.data);
+        log('[SSE] type=' + data.type);
+        if (!ws || ws.readyState !== WebSocket.OPEN) {{
+          log('[SSE] WebSocket not open!');
+          return;
+        }}
+        if (data.type === 'progress') {{
+          ws.send(JSON.stringify({{
+            realtimeInput: {{ text: data.message }}
+          }}));
+        }}
+        if (data.type === 'result') {{
+          const text = data.message.length > 1000 ? data.message.substring(0, 1000) : data.message;
+          ws.send(JSON.stringify({{
+            realtimeInput: {{ text: 'Here is what I found: ' + text + '. What would you like to do next?' }}
+          }}));
+          log('[SSE] Result sent to Gemini (' + text.length + ' chars)');
+        }}
+      }} catch(e) {{
+        log('[SSE] Error: ' + e.message);
       }}
     }};
+    sse.onerror = () => {{ log('[SSE] Connection error'); }};
   }}
 
   function stopSSE() {{
