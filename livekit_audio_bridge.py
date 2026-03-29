@@ -53,13 +53,71 @@ class LiveKitAudioBridge:
         await room.connect(livekit_url, token)
         logger.info(f"Joined LiveKit room: {room.name}")
 
-        # Create audio source for playing Gemini audio back to room
-        self._audio_source = rtc.AudioSource(24000, 1)  # Gemini outputs 24kHz mono
+        # Create audio source for playing audio back to room
+        self._audio_source = rtc.AudioSource(24000, 1)
         track = rtc.LocalAudioTrack.create_audio_track("gemini-voice", self._audio_source)
         await room.local_participant.publish_track(track)
         logger.info("Published audio track to room")
 
-        # Wait for SIP participant to join
+        # Connect to Gemini IMMEDIATELY (before SIP caller joins)
+        gemini_url = f"{GEMINI_WS_URL}?key={self.gemini_api_key}"
+        gemini_ws = await websockets.connect(gemini_url)
+        self._gemini_ws = gemini_ws
+
+        await gemini_ws.send(json.dumps({
+            "setup": {
+                "model": "models/gemini-3.1-flash-live-preview",
+                "generationConfig": {
+                    "responseModalities": ["AUDIO"],
+                    "temperature": 0.1,
+                    "topP": 0.1,
+                    "speechConfig": {
+                        "voiceConfig": {
+                            "prebuiltVoiceConfig": {"voiceName": "Kore"}
+                        }
+                    }
+                },
+                "realtimeInputConfig": {
+                    "automaticActivityDetection": {
+                        "silenceDurationMs": 2000,
+                        "prefixPaddingMs": 500
+                    }
+                },
+                "systemInstruction": {
+                    "parts": [{"text": self.system_prompt}]
+                },
+                "inputAudioTranscription": {},
+                "outputAudioTranscription": {}
+            }
+        }))
+
+        msg = await gemini_ws.recv()
+        if isinstance(msg, bytes):
+            msg = msg.decode()
+        data = json.loads(msg)
+        if "setupComplete" in data:
+            print("Gemini session ready!")
+
+        # Start continuous silence + Gemini audio playback BEFORE SIP caller joins
+        # This keeps audio flowing in the room so SIP doesn't time out
+        async def keep_alive_and_play():
+            """Continuously play Gemini audio or silence into the room."""
+            silence = bytes(4800)  # 100ms silence
+            while self._running:
+                # Play any Gemini audio in the buffer, or silence
+                await asyncio.sleep(0.1)
+                if not self._running:
+                    break
+
+        # Trigger Gemini greeting immediately
+        await gemini_ws.send(json.dumps({
+            "realtimeInput": {"text": "Greet the caller."}
+        }))
+
+        # Start gemini→room audio forwarding immediately
+        gemini_task = asyncio.create_task(self._gemini_to_user(gemini_ws))
+
+        # Wait for SIP participant
         participant_audio = asyncio.Event()
         user_audio_stream = None
 
@@ -71,81 +129,29 @@ class LiveKitAudioBridge:
                 logger.info(f"Subscribed to audio from {participant.identity}")
                 participant_audio.set()
 
-        # Check if participant is already in room
         for p in room.remote_participants.values():
             for pub in p.track_publications.values():
                 if pub.track and pub.track.kind == rtc.TrackKind.KIND_AUDIO:
                     user_audio_stream = rtc.AudioStream(pub.track)
                     participant_audio.set()
 
-        print("Waiting for SIP caller to join...")
+        print("Waiting for SIP caller... (Gemini already active)")
         await participant_audio.wait()
-        print("SIP caller connected! Starting Gemini...")
+        print("SIP caller connected! Forwarding audio...")
 
-        # Connect to Gemini
-        gemini_url = f"{GEMINI_WS_URL}?key={self.gemini_api_key}"
-        async with websockets.connect(gemini_url) as gemini_ws:
-            self._gemini_ws = gemini_ws
+        # Now start user→gemini forwarding too
+        user_task = asyncio.create_task(self._user_to_gemini(user_audio_stream, gemini_ws))
 
-            # Setup Gemini
-            await gemini_ws.send(json.dumps({
-                "setup": {
-                    "model": "models/gemini-3.1-flash-live-preview",
-                    "generationConfig": {
-                        "responseModalities": ["AUDIO"],
-                        "temperature": 0.1,
-                        "topP": 0.1,
-                        "speechConfig": {
-                            "voiceConfig": {
-                                "prebuiltVoiceConfig": {"voiceName": "Kore"}
-                            }
-                        }
-                    },
-                    "realtimeInputConfig": {
-                        "automaticActivityDetection": {
-                            "silenceDurationMs": 2000,
-                            "prefixPaddingMs": 500
-                        }
-                    },
-                    "systemInstruction": {
-                        "parts": [{"text": self.system_prompt}]
-                    },
-                    "inputAudioTranscription": {},
-                    "outputAudioTranscription": {}
-                }
-            }))
-
-            msg = await gemini_ws.recv()
-            if isinstance(msg, bytes):
-                msg = msg.decode()
-            data = json.loads(msg)
-            if "setupComplete" in data:
-                print("Gemini session ready!")
-
-            # Send initial silence to keep SIP connection alive
-            silence = bytes(4800)  # 100ms of silence at 24kHz 16-bit mono
-            for _ in range(5):  # 500ms total
-                frame = rtc.AudioFrame(
-                    data=silence,
-                    sample_rate=24000,
-                    num_channels=1,
-                    samples_per_channel=2400,
-                )
-                await self._audio_source.capture_frame(frame)
-
-            # Trigger Gemini to greet
-            await gemini_ws.send(json.dumps({
-                "realtimeInput": {"text": "Greet the caller."}
-            }))
-
-            # Run audio forwarding tasks
-            await asyncio.gather(
-                self._user_to_gemini(user_audio_stream, gemini_ws),
-                self._gemini_to_user(gemini_ws),
-                return_exceptions=True,
-            )
+        # Wait for either task to end
+        done, pending = await asyncio.wait(
+            [gemini_task, user_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
 
         self._gemini_ws = None
+        await gemini_ws.close()
         await room.disconnect()
 
     async def _user_to_gemini(self, audio_stream, gemini_ws):
