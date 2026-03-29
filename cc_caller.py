@@ -273,7 +273,8 @@ def main():
         print(f"Dial {sip_uri} from Linphone/Zoiper to start a task. Waiting...")
         send_notification(
             title="CC-Caller Ready",
-            message=f"Dial {sip_uri} from your SIP app",
+            message="Tap to connect",
+            url=sip_uri,
         )
         try:
             instruction = transcript_queue.get()
@@ -393,7 +394,8 @@ def main():
                 print(f"Dial {sip_uri} from Linphone for the update")
                 send_notification(
                     title="CC-Caller Update",
-                    message=summary_data["summary"][:200] + " — Dial from Linphone",
+                    message=summary_data["summary"][:200],
+                    url=sip_uri,
                 )
             elif args.web:
                 print("Preparing web call...")
@@ -433,7 +435,8 @@ def main():
                 elif args.sip:
                     send_notification(
                         title="CC-Caller: Still waiting",
-                        message=f"Dial {sip_uri}",
+                        message="Tap to connect",
+                        url=sip_uri,
                     )
                 elif args.web:
                     send_notification(
