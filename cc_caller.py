@@ -106,11 +106,21 @@ def run_claude(instruction: str, session_id: str, session_name: str = "caller", 
         cmd = base_cmd + ["--resume", session_id, instruction]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
+            # Session doesn't exist or is corrupted — start fresh
+            session_id = str(uuid.uuid4())
             cmd = base_cmd + ["--session-id", session_id, instruction]
             result = subprocess.run(cmd, capture_output=True, text=True)
+            print(f"New session created: {session_id}")
     else:
         cmd = base_cmd + ["--resume", session_id, instruction]
         result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0 and "400" in result.stderr:
+            # Session corrupted mid-conversation — start fresh
+            print("Session corrupted, starting fresh...")
+            session_id = str(uuid.uuid4())
+            cmd = base_cmd + ["--session-id", session_id, instruction]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            print(f"New session created: {session_id}")
     return result.stdout, session_id
 
 
@@ -205,6 +215,7 @@ def main():
     parser.add_argument("--sip", action="store_true", help="Use SIP for inbound calls (native phone ring via Linphone/Zoiper)")
     parser.add_argument("--tunnel", choices=["cloudflare", "ngrok"], default="cloudflare", help="Tunnel provider (default: cloudflare, free)")
     parser.add_argument("--session-id", type=str, default="caller", help="Claude session ID (default: 'caller', persists across restarts)")
+    parser.add_argument("--new-session", action="store_true", help="Start a fresh Claude session instead of resuming")
     parser.add_argument("--interval-minutes", type=int, default=15)
     parser.add_argument("--port", type=int, default=int(os.getenv("WEBHOOK_PORT", "8765")))
     args = parser.parse_args()
@@ -262,11 +273,14 @@ def main():
     print(f"Webhook listening at {webhook_url}")
 
     session_name = args.session_id
-    session_id = name_to_uuid(session_name)
+    if args.new_session:
+        session_id = str(uuid.uuid4())
+        print(f"Fresh Claude session: {session_id}")
+    else:
+        session_id = name_to_uuid(session_name)
+        print(f"Claude session: {session_name} ({session_id})")
     instruction = args.instruction
     last_call_time = 0.0
-
-    print(f"Claude session: {session_name} ({session_id})")
 
     if args.inbound and args.gemini:
         print("\n--- Gemini Live inbound mode ---")

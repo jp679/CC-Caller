@@ -25,10 +25,10 @@ def test_run_claude_first_run_tries_resume_then_new():
         output, session_id = run_claude("Fix the bug", session_id=sid, is_first_run=True)
 
     assert output == "I refactored the module.\n"
-    assert session_id == sid
+    # Session ID changes when resume fails (new UUID generated)
+    assert session_id != sid
     call_args = mock_run.call_args_list[1][0][0]
     assert "--session-id" in call_args
-    assert sid in call_args
 
 
 def test_run_claude_subsequent_iteration_resumes():
