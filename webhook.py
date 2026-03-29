@@ -841,20 +841,27 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     sse = new EventSource('/live-stream');
     sse.onmessage = (event) => {{
       const data = JSON.parse(event.data);
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
       if (data.type === 'progress') {{
         log('[progress] ' + data.message);
-        ws.send(JSON.stringify({{
-          realtimeInput: {{ text: '[PROGRESS] ' + data.message }}
-        }}));
+        speak(data.message);
       }}
       if (data.type === 'result') {{
         log('[result received]');
-        ws.send(JSON.stringify({{
-          realtimeInput: {{ text: '[RESULT] Here is what was done: ' + data.message + '. Please read the key points to the user and ask what they would like to do next.' }}
-        }}));
+        speak(data.message);
       }}
     }};
+
+    // Browser TTS for results — more reliable than injecting text into Gemini
+    const synth = window.speechSynthesis;
+    function speak(text) {{
+      // Truncate long text for TTS
+      const maxLen = 500;
+      const toSpeak = text.length > maxLen ? text.substring(0, maxLen) + '... That is the summary.' : text;
+      const utterance = new SpeechSynthesisUtterance(toSpeak);
+      utterance.rate = 1.2;
+      utterance.lang = 'en-US';
+      synth.speak(utterance);
+    }}
   }}
 
   function stopSSE() {{
