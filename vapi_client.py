@@ -65,10 +65,10 @@ def build_assistant_config(
         },
         "firstMessage": "Hey, got an update for you.",
         "voice": {
-            "provider": "openai",
-            "voiceId": "alloy",
-            "model": "gpt-4o-mini-tts",
-            "speed": 1.15,
+            "provider": "11labs",
+            "voiceId": "21m00Tcm4TlvDq8ikWAM",
+            "model": "eleven_multilingual_v2",
+            "speed": 1.2,
         },
         "stopSpeakingPlan": {
             "numWords": 0,
@@ -99,10 +99,10 @@ def build_inbound_assistant_config(webhook_url: str) -> dict:
         },
         "firstMessage": "Hey, what would you like me to work on?",
         "voice": {
-            "provider": "openai",
-            "voiceId": "alloy",
-            "model": "gpt-4o-mini-tts",
-            "speed": 1.15,
+            "provider": "11labs",
+            "voiceId": "21m00Tcm4TlvDq8ikWAM",
+            "model": "eleven_multilingual_v2",
+            "speed": 1.2,
         },
         "stopSpeakingPlan": {
             "numWords": 0,
