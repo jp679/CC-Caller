@@ -86,10 +86,15 @@ class GeminiBridge:
                 logger.info("Gemini session ready")
 
             # Run two tasks: browser→gemini and gemini→browser
-            await asyncio.gather(
+            # Use return_exceptions to prevent one failure from killing both
+            results = await asyncio.gather(
                 self._browser_to_gemini(websocket, gemini_ws),
                 self._gemini_to_browser(gemini_ws, websocket),
+                return_exceptions=True,
             )
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.error(f"Bridge task error: {r}")
 
         self._gemini_ws = None
         self._running = False

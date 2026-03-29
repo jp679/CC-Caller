@@ -197,14 +197,19 @@ def start_tunnel(port: int, method: str) -> tuple:
         return url, lambda: ngrok.disconnect(url)
 
 
+TERMINATION_PHRASES = [
+    "end session", "we're done", "done for now", "stop session",
+    "that's all", "goodbye", "finish session", "close session",
+    "terminar", "terminemos",
+]
+
+
 def is_termination(transcript: str) -> bool:
-    result = subprocess.run(
-        ["claude", "-p", TERMINATION_CHECK_PROMPT],
-        input=transcript,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip().upper().startswith("YES")
+    lower = transcript.strip().lower()
+    # Only match if the transcript is short (likely a command, not mid-sentence)
+    if len(lower) > 50:
+        return False
+    return any(phrase in lower for phrase in TERMINATION_PHRASES)
 
 
 def main():
