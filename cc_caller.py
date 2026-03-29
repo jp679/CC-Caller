@@ -417,36 +417,35 @@ def main():
                             webhook_url=webhook_url,
                         )
 
-                        # Call back via SIP
-                        try:
-                            create_call(
-                                api_key=api_key,
-                                phone_number_id=sip_phone_number_id,
-                                customer_number="cc-caller",
-                                assistant_config=callback_config,
-                            )
-                            print("[hybrid] Callback initiated via SIP")
-                        except Exception as e:
-                            print(f"[hybrid] SIP callback failed: {e}")
-                            # Try phone as fallback
-                            if phone_number_id and customer_number:
-                                try:
-                                    create_call(
-                                        api_key=api_key,
-                                        phone_number_id=phone_number_id,
-                                        customer_number=customer_number,
-                                        assistant_config=callback_config,
-                                    )
-                                    print("[hybrid] Callback initiated via phone")
-                                except Exception as e2:
-                                    print(f"[hybrid] Phone callback failed: {e2}")
+                        # Configure SIP number with result so redial works
+                        configure_inbound_number(api_key, sip_phone_number_id, callback_config)
 
-                            # Always send ntfy as backup
-                            send_notification(
-                                title="CC-Caller Result Ready",
-                                message=summary_data["summary"][:200],
-                                url=sip_uri,
-                            )
+                        # Send ntfy with SIP deep link
+                        send_notification(
+                            title="CC-Caller Result Ready",
+                            message=summary_data["summary"][:200],
+                            url=sip_uri,
+                        )
+
+                        # Try phone callback if available
+                        if phone_number_id and customer_number:
+                            try:
+                                create_call(
+                                    api_key=api_key,
+                                    phone_number_id=phone_number_id,
+                                    customer_number=customer_number,
+                                    assistant_config=callback_config,
+                                )
+                                print("[hybrid] Phone callback initiated")
+                            except Exception as e:
+                                print(f"[hybrid] Phone callback failed: {e}")
+
+                        print("[hybrid] Result ready — redial from Linphone or answer phone")
+
+                        # Restore persistent tool config for next inbound call
+                        time.sleep(5)
+                        configure_inbound_number(api_key, sip_phone_number_id, sip_config)
+                        print("[hybrid] SIP number restored to persistent mode")
 
             except KeyboardInterrupt:
                 print("\nExiting.")
