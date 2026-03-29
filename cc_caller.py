@@ -335,7 +335,8 @@ def main():
                     while not progress_stop.is_set():
                         progress_stop.wait(15)
                         if not progress_stop.is_set():
-                            app.state.live_sse_queue.put({"type": "progress", "message": "Still working on that..."})
+                            app.state.live_msg_counter += 1
+                            app.state.live_messages.append({"type": "progress", "message": "Still working on that...", "id": app.state.live_msg_counter})
                             print("  [progress ping]")
 
                 progress_thread = threading.Thread(target=push_progress, daemon=True)
@@ -348,7 +349,11 @@ def main():
                 print(f"Output length: {len(output)} chars")
 
                 # Push result to Gemini via SSE
-                app.state.live_sse_queue.put({"type": "result", "message": output})
+                app.state.live_msg_counter += 1
+                app.state.live_messages.append({"type": "result", "message": output, "id": app.state.live_msg_counter})
+                # Keep only last 20 messages
+                if len(app.state.live_messages) > 20:
+                    app.state.live_messages = app.state.live_messages[-20:]
                 print("Result pushed to live session")
 
         except KeyboardInterrupt:

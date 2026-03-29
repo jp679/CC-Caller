@@ -570,21 +570,15 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
 </script>
 </body></html>""")
 
-    # --- Live mode SSE + page ---
+    # --- Live mode polling + page ---
+    app.state.live_messages = []  # list of {type, message, id}
+    app.state.live_msg_counter = 0
 
-    @app.get("/live-stream")
-    async def live_stream():
-        async def event_generator():
-            while True:
-                try:
-                    msg = app.state.live_sse_queue.get_nowait()
-                    yield f"data: {json_module.dumps(msg)}\n\n"
-                except queue.Empty:
-                    await asyncio.sleep(0.5)
-                    yield ": keepalive\n\n"
-        return StreamingResponse(event_generator(), media_type="text/event-stream",
-                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                                          "Connection": "keep-alive", "Transfer-Encoding": "chunked"})
+    @app.get("/live-poll")
+    async def live_poll(after: int = 0):
+        """Return messages newer than 'after' ID."""
+        msgs = [m for m in app.state.live_messages if m["id"] > after]
+        return {"messages": msgs}
 
     @app.get("/live-config")
     async def live_config():
@@ -651,7 +645,6 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
   let playQueue = [];
   let isPlaying = false;
   let currentSource = null;
-  let sse = null;
   let idleTimer = null;
   const IDLE_TIMEOUT = 2 * 60 * 60 * 1000; // 2 hours
 
@@ -840,38 +833,41 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     if (idleTimer) clearTimeout(idleTimer);
   }}
 
-  // --- SSE listener ---
+  // --- Polling listener ---
+  let lastMsgId = 0;
+  let pollInterval = null;
   function startSSE() {{
-    sse = new EventSource('/live-stream');
-    sse.onmessage = (event) => {{
+    pollInterval = setInterval(async () => {{
       try {{
-        const data = JSON.parse(event.data);
-        log('[SSE] type=' + data.type);
-        if (!ws || ws.readyState !== WebSocket.OPEN) {{
-          log('[SSE] WebSocket not open!');
-          return;
+        const resp = await fetch('/live-poll?after=' + lastMsgId);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        for (const msg of data.messages) {{
+          lastMsgId = msg.id;
+          log('[poll] type=' + msg.type + ' id=' + msg.id);
+          if (!ws || ws.readyState !== WebSocket.OPEN) {{
+            log('[poll] WebSocket not open!');
+            continue;
+          }}
+          if (msg.type === 'progress') {{
+            ws.send(JSON.stringify({{
+              realtimeInput: {{ text: msg.message }}
+            }}));
+          }}
+          if (msg.type === 'result') {{
+            const text = msg.message.length > 1000 ? msg.message.substring(0, 1000) : msg.message;
+            ws.send(JSON.stringify({{
+              realtimeInput: {{ text: 'Here is what I found: ' + text + '. What would you like to do next?' }}
+            }}));
+            log('[poll] Result sent to Gemini (' + text.length + ' chars)');
+          }}
         }}
-        if (data.type === 'progress') {{
-          ws.send(JSON.stringify({{
-            realtimeInput: {{ text: data.message }}
-          }}));
-        }}
-        if (data.type === 'result') {{
-          const text = data.message.length > 1000 ? data.message.substring(0, 1000) : data.message;
-          ws.send(JSON.stringify({{
-            realtimeInput: {{ text: 'Here is what I found: ' + text + '. What would you like to do next?' }}
-          }}));
-          log('[SSE] Result sent to Gemini (' + text.length + ' chars)');
-        }}
-      }} catch(e) {{
-        log('[SSE] Error: ' + e.message);
-      }}
-    }};
-    sse.onerror = () => {{ log('[SSE] Connection error'); }};
+      }} catch(e) {{}}
+    }}, 2000);
   }}
 
   function stopSSE() {{
-    if (sse) {{ sse.close(); sse = null; }}
+    if (pollInterval) {{ clearInterval(pollInterval); pollInterval = null; }}
   }}
 
   async function sendTranscript() {{
