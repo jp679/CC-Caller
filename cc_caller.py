@@ -102,25 +102,27 @@ def run_claude(instruction: str, session_id: str, session_name: str = "caller", 
         "--disallowedTools", "Bash(cc-caller*) Bash(python*cc_caller*) Bash(python*vapi*) Bash(curl*vapi*) Bash(curl*twilio*)",
         "--name", session_name,
     ]
+    def _is_error(r):
+        combined = (r.stdout + r.stderr).lower()
+        return r.returncode != 0 or "api error: 400" in combined or "concurrency" in combined
+
     if is_first_run:
         cmd = base_cmd + ["--resume", session_id, instruction]
         result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            # Session doesn't exist or is corrupted — start fresh
+        if _is_error(result):
             session_id = str(uuid.uuid4())
             cmd = base_cmd + ["--session-id", session_id, instruction]
             result = subprocess.run(cmd, capture_output=True, text=True)
-            print(f"New session created: {session_id}")
+            print(f"New session: {session_id}")
     else:
         cmd = base_cmd + ["--resume", session_id, instruction]
         result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0 and "400" in result.stderr:
-            # Session corrupted mid-conversation — start fresh
-            print("Session corrupted, starting fresh...")
+        if _is_error(result):
+            print("Session error, starting fresh...")
             session_id = str(uuid.uuid4())
             cmd = base_cmd + ["--session-id", session_id, instruction]
             result = subprocess.run(cmd, capture_output=True, text=True)
-            print(f"New session created: {session_id}")
+            print(f"New session: {session_id}")
     return result.stdout, session_id
 
 
