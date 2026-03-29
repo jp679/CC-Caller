@@ -31,13 +31,13 @@ class CCCallerAgent:
         self.transcript_queue = transcript_queue
         self.gemini_api_key = gemini_api_key
         self.system_prompt = system_prompt
-        self._inject_queue: asyncio.Queue = asyncio.Queue()
+        self._inject_queue: Optional[asyncio.Queue] = None
         self._session: Optional[AgentSession] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def inject_text(self, text: str) -> None:
         """Thread-safe: inject text into the Gemini conversation."""
-        if self._loop:
+        if self._loop and self._inject_queue:
             self._loop.call_soon_threadsafe(self._inject_queue.put_nowait, text)
 
     async def _injection_loop(self):
@@ -52,9 +52,11 @@ class CCCallerAgent:
 
     async def run(self, room: rtc.Room):
         """Main agent loop — called after joining the room."""
-        self._loop = asyncio.get_event_loop()
+        self._loop = asyncio.get_running_loop()
+        self._inject_queue = asyncio.Queue()
 
         model = google.realtime.RealtimeModel(
+            model="gemini-3.1-flash-live-preview",
             api_key=self.gemini_api_key,
             voice="Kore",
             temperature=0.7,
