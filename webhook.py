@@ -654,6 +654,15 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     // Connect to bridge WebSocket on localhost
     ws = new WebSocket(WS_URL);
 
+    // Transcript batching
+    let agentBuf = '';
+    let agentTimer = null;
+    function flushAgent() {{
+      if (agentBuf.trim()) log('Agent: ' + agentBuf.trim());
+      agentBuf = '';
+      agentTimer = null;
+    }}
+
     ws.onmessage = (event) => {{
       const data = JSON.parse(event.data);
 
@@ -672,7 +681,9 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
       }}
 
       if (data.type === 'transcript') {{
-        log(data.role + ': ' + data.text);
+        agentBuf += ' ' + data.text;
+        if (agentTimer) clearTimeout(agentTimer);
+        agentTimer = setTimeout(flushAgent, 1000);
       }}
     }};
 
@@ -697,6 +708,11 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
     const btn = document.getElementById('mic');
     btn.textContent = micMuted ? 'Mic OFF' : 'Mic ON';
     btn.className = micMuted ? '' : 'live';
+    // Interrupt: stop playback when user unmutes to speak
+    if (!micMuted) {{
+      stopPlayback();
+      flushAgent();
+    }}
   }};
 
   document.getElementById('end').onclick = () => {{
