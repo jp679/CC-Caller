@@ -71,6 +71,30 @@ DISALLOWED_FILES = [
 ]
 
 
+CLEAN_TRANSCRIPT_PROMPT = (
+    "You are a transcript cleaner. The following is a raw voice transcript from a user "
+    "giving instructions to a coding assistant. Clean it up into a clear, actionable instruction. "
+    "Remove filler words, false starts, repetitions, and 'can you hear me' type noise. "
+    "Preserve the user's intent exactly — don't add or remove tasks. "
+    "If the user asked multiple things, list them clearly. "
+    "If the user spoke in Spanish, keep the instruction in Spanish. "
+    "Output ONLY the cleaned instruction, nothing else."
+)
+
+
+def clean_transcript(raw_transcript: str) -> str:
+    prompt = f"{CLEAN_TRANSCRIPT_PROMPT}\n\n---\n\n{raw_transcript}"
+    result = subprocess.run(
+        ["claude", "-p", prompt],
+        capture_output=True,
+        text=True,
+    )
+    cleaned = result.stdout.strip()
+    if not cleaned or result.returncode != 0:
+        return raw_transcript
+    return cleaned
+
+
 def run_claude(instruction: str, session_id: str, session_name: str = "caller", is_first_run: bool = False) -> Tuple[str, str]:
     base_cmd = [
         "claude", "-p", "--output-format", "text",
@@ -457,13 +481,15 @@ def main():
                     print("Still no response. Pausing. Restart to continue.")
                     break
 
-            print(f"You said: {transcript}")
+            print(f"Raw transcript: {transcript}")
 
             if is_termination(transcript):
                 print("Termination signal received. Exiting.")
                 break
 
-            instruction = transcript
+            print("Cleaning transcript...")
+            instruction = clean_transcript(transcript)
+            print(f"Instruction: {instruction}")
 
     except KeyboardInterrupt:
         print("\nInterrupted. Exiting.")
