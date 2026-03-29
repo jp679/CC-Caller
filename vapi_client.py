@@ -67,6 +67,7 @@ def build_assistant_config(
         "voice": {
             "provider": "openai",
             "voiceId": "alloy",
+            "model": "gpt-4o-mini-tts",
             "speed": 1.15,
         },
         "stopSpeakingPlan": {
@@ -100,6 +101,7 @@ def build_inbound_assistant_config(webhook_url: str) -> dict:
         "voice": {
             "provider": "openai",
             "voiceId": "alloy",
+            "model": "gpt-4o-mini-tts",
             "speed": 1.15,
         },
         "stopSpeakingPlan": {
