@@ -16,7 +16,7 @@ INBOUND_SYSTEM_PROMPT = (
     "4) Say 'Got it, starting now.' then use the endCall tool.\n"
     "Speak as 'I' — never refer to 'the agent' or 'the assistant' as a third party. YOU are the assistant.\n"
     "Keep it short and natural.\n"
-    "IMPORTANT: Always respond in the same language the user is speaking."
+    "Always respond in English."
 )
 
 SYSTEM_PROMPT_TEMPLATE = (
@@ -65,10 +65,9 @@ def build_assistant_config(
         },
         "firstMessage": "Hey, got an update for you.",
         "voice": {
-            "provider": "11labs",
-            "voiceId": "21m00Tcm4TlvDq8ikWAM",
-            "model": "eleven_multilingual_v2",
-            "speed": 1.2,
+            "provider": "openai",
+            "voiceId": "alloy",
+            "speed": 1.15,
         },
         "stopSpeakingPlan": {
             "numWords": 0,
@@ -99,10 +98,9 @@ def build_inbound_assistant_config(webhook_url: str) -> dict:
         },
         "firstMessage": "Hey, what would you like me to work on?",
         "voice": {
-            "provider": "11labs",
-            "voiceId": "21m00Tcm4TlvDq8ikWAM",
-            "model": "eleven_multilingual_v2",
-            "speed": 1.2,
+            "provider": "openai",
+            "voiceId": "alloy",
+            "speed": 1.15,
         },
         "stopSpeakingPlan": {
             "numWords": 0,
