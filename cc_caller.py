@@ -390,10 +390,10 @@ def main():
             elif args.sip:
                 print("Preparing SIP callback...")
                 configure_inbound_number(api_key, sip_phone_number_id, assistant_config)
-                print(f"Dial {sip_uri} for the update")
+                print(f"Dial {sip_uri} from Linphone for the update")
                 send_notification(
                     title="CC-Caller Update",
-                    message=summary_data["summary"][:200],
+                    message=summary_data["summary"][:200] + " — Dial from Linphone",
                 )
             elif args.web:
                 print("Preparing web call...")
