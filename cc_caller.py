@@ -64,11 +64,18 @@ WORKER_SYSTEM_PROMPT = (
     "Just do the coding work and output your results."
 )
 
+# Files the worker should never touch
+DISALLOWED_FILES = [
+    "cc_caller.py", "vapi_client.py", "webhook.py", "summarizer.py",
+    ".env", ".env.example", "cc-caller",
+]
+
 
 def run_claude(instruction: str, session_id: str, is_first_run: bool = False) -> Tuple[str, str]:
     base_cmd = [
         "claude", "-p", "--output-format", "text",
         "--append-system-prompt", WORKER_SYSTEM_PROMPT,
+        "--disallowedTools", "Bash(cc-caller*) Bash(python*cc_caller*) Bash(python*vapi*) Bash(curl*vapi*) Bash(curl*twilio*)",
     ]
     if is_first_run:
         cmd = base_cmd + ["--resume", session_id, instruction]

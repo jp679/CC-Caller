@@ -1,0 +1,10 @@
+# CC-Caller infrastructure — worker Claude should not read these
+cc_caller.py
+vapi_client.py
+webhook.py
+summarizer.py
+cc-caller
+.env
+.env.example
+tests/
+docs/superpowers/
