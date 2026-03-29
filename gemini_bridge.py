@@ -63,6 +63,7 @@ class GeminiBridge:
                     "model": "models/gemini-3.1-flash-live-preview",
                     "generationConfig": {
                         "responseModalities": ["AUDIO"],
+                        "temperature": 0.1,
                         "speechConfig": {
                             "voiceConfig": {
                                 "prebuiltVoiceConfig": {"voiceName": "Kore"}
