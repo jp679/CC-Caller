@@ -265,6 +265,14 @@ def create_app(transcript_queue: queue.Queue) -> FastAPI:
         }}
       }};
 
+      // Safety: max 5 minutes per call, then auto-close
+      setTimeout(() => {{
+        if (isConnected) {{
+          log('Max call duration reached, closing...');
+          endCall();
+        }}
+      }}, 300000);
+
       ws.onerror = (e) => {{
         log('WebSocket error: ' + JSON.stringify(e));
         document.getElementById('status').textContent = 'Error';
