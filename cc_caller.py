@@ -123,7 +123,7 @@ def should_call(
 
 def send_notification(title: str, message: str, url: str = "") -> None:
     ntfy_topic = os.getenv("NTFY_TOPIC", "cc-caller")
-    headers = {"Title": title}
+    headers = {"Title": title, "Priority": "urgent", "Tags": "phone"}
     if url:
         headers["Click"] = url
         headers["Actions"] = f"view, Open Call, {url}"
