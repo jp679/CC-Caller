@@ -57,28 +57,29 @@ class LiveKitAudioBridge:
 
         # Keep running — handle SIP callers as they join
         while self._running:
-            # Wait for SIP participant
             participant_audio = asyncio.Event()
-            user_audio_stream = None
+            user_track = None
 
             @room.on("track_subscribed")
-            def on_track(t: rtc.Track, pub, participant):
-                nonlocal user_audio_stream
-                if t.kind == rtc.TrackKind.KIND_AUDIO:
-                    user_audio_stream = rtc.AudioStream(t)
-                    logger.info(f"Audio from {participant.identity}")
+            def on_track(track: rtc.Track, publication, participant):
+                nonlocal user_track
+                if track.kind == rtc.TrackKind.KIND_AUDIO:
+                    user_track = track
+                    logger.info(f"Audio track from {participant.identity}")
                     participant_audio.set()
-
-            # Check existing participants
-            for p in room.remote_participants.values():
-                for pub in p.track_publications.values():
-                    if pub.track and pub.track.kind == rtc.TrackKind.KIND_AUDIO:
-                        user_audio_stream = rtc.AudioStream(pub.track)
-                        participant_audio.set()
 
             print("Waiting for SIP caller...")
             await participant_audio.wait()
-            print("SIP caller connected! Connecting Gemini...")
+            print("SIP caller connected! Waiting for track to stabilize...")
+            await asyncio.sleep(1)  # Let the track fully initialize
+
+            try:
+                user_audio_stream = rtc.AudioStream(user_track)
+            except Exception as e:
+                print(f"AudioStream error: {e}")
+                continue
+
+            print("Connecting Gemini...")
 
             # NOW connect Gemini (fast — caller is already in room)
             try:
