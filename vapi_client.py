@@ -54,8 +54,8 @@ def build_assistant_config(
             "model": "gpt-4o-mini-transcribe",
         },
         "model": {
-            "provider": "anthropic",
-            "model": "claude-sonnet-4-6",
+            "provider": "openai",
+            "model": "gpt-4o-mini",
             "messages": [
                 {"role": "system", "content": system_content}
             ],
@@ -67,7 +67,7 @@ def build_assistant_config(
         "voice": {
             "provider": "11labs",
             "voiceId": "21m00Tcm4TlvDq8ikWAM",
-            "model": "eleven_multilingual_v2",
+            "model": "eleven_turbo_v2_5",
             "speed": 1.2,
         },
         "stopSpeakingPlan": {
@@ -88,8 +88,8 @@ def build_inbound_assistant_config(webhook_url: str) -> dict:
             "model": "gpt-4o-mini-transcribe",
         },
         "model": {
-            "provider": "anthropic",
-            "model": "claude-sonnet-4-6",
+            "provider": "openai",
+            "model": "gpt-4o-mini",
             "messages": [
                 {"role": "system", "content": INBOUND_SYSTEM_PROMPT}
             ],
@@ -101,7 +101,7 @@ def build_inbound_assistant_config(webhook_url: str) -> dict:
         "voice": {
             "provider": "11labs",
             "voiceId": "21m00Tcm4TlvDq8ikWAM",
-            "model": "eleven_multilingual_v2",
+            "model": "eleven_turbo_v2_5",
             "speed": 1.2,
         },
         "stopSpeakingPlan": {
