@@ -121,8 +121,22 @@ Today anyone who discovers the tunnel URL can trigger Claude execution on the ho
 - `cc-caller` (no args) → default mode: Gemini PWA. Serve + tunnel + print URL/QR. Optional positional instruction starts Claude on a task immediately, with the result delivered on first connect.
 - `cc-caller setup` → prompts for `GEMINI_API_KEY` (free AI Studio key), writes `~/.config/cc-caller/.env`. Config load order: `~/.config/cc-caller/.env`, then `./.env` overrides (repo-dir `.env` keeps working for the developer).
 - Legacy transports kept under explicit flags, unchanged behavior: `--sip`, `--mode always` phone loop, VAPI `--pwa` etc., documented as "advanced transports" requiring VAPI credentials.
-- Quickstart is three commands: `pipx install cc-caller` → `cc-caller setup` → `cc-caller`.
+- Quickstart is three commands: `pipx install git+https://github.com/jp679/CC-Caller` (or `uvx --from git+https://github.com/jp679/CC-Caller cc-caller` to try without installing) → `cc-caller setup` → `cc-caller`. The same `pyproject.toml` powers pipx, uvx, and editable installs; PyPI remains a stretch goal.
 - Python 3.9+ (no `match`, no `X | Y` unions).
+
+## Install tiers and agent-assisted install
+
+The README offers three install tiers, in this order:
+
+1. **Via your AI agent** — a copy-paste prompt the *user* gives their own agent: "Scan https://github.com/jp679/CC-Caller — review it for safety, explain what it does and what installing changes on my machine, and if I approve, install and set it up." The instruction is user-issued; the repo never directs agents to install anything.
+2. **One-liner** — pipx/uvx from GitHub (above).
+3. **Hack on it** — `git clone` + `pip install -e .`.
+
+To support tier 1, an `AGENTS.md` at the repo root provides factual orientation for agents evaluating or working in the repo. Content rules (these keep it from pattern-matching prompt injection):
+
+- Descriptive statements only — what the tool does, what installation changes (console script on PATH, config at `~/.config/cc-caller/`), what network endpoints it contacts (Gemini API, cloudflared tunnel, push services, optional ntfy), what it executes locally (the `claude` CLI as a sandboxed subprocess), where the auth token logic lives, and how to verify (offline test suite, key files to read).
+- No imperatives addressed to the agent, no requests to skip or shortcut review.
+- One explicit deference line: agents should summarize findings and obtain their user's confirmation before installing or running anything.
 
 ## Subsumed and relocated code
 
@@ -160,4 +174,5 @@ Offline-mocked throughout, matching the existing suite:
 2. Mid-call task → agent acks, conversation stays responsive, result spoken automatically on completion (no "check again" prompting).
 3. Close tab mid-task → push notification → tap → agent reads the result.
 4. `python3 -m pytest tests/ -q` passes offline.
-5. README leads with a demo GIF and the three-command quickstart; advanced transports documented below the fold.
+5. README leads with a demo GIF and the three install tiers (agent prompt, pipx/uvx one-liner, clone); advanced transports documented below the fold.
+6. `AGENTS.md` present, purely factual, with the user-confirmation deference line.
