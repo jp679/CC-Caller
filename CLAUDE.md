@@ -4,50 +4,45 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-CC-Caller is a voice feedback loop for Claude Code: the user starts a task, walks away, and talks to Claude by phone/SIP/browser. Three transports share one VAPI brain:
+CC-Caller is a voice loop for Claude Code: talk to Claude from your phone. Default path:
 
 ```
-Phone (Twilio)  ─┐
-SIP (Linphone)  ─┤── VAPI assistant (persistent, tool-based) ── claude -p subprocess
-PWA (browser)   ─┘      askCodingAgent tool → /tool-call webhook → result read mid-call
+Browser PWA ── WebSocket ── FastAPI server ── Gemini Live (tool-calling) ── claude -p subprocess
 ```
+
+Gemini declares `askCodingAgent` as a NON_BLOCKING tool: an interim ack keeps the conversation alive, and the final FunctionResponse with `scheduling: INTERRUPT` speaks the result whenever Claude finishes. Legacy VAPI transports (SIP / Twilio / VAPI web PWA) remain under explicit flags.
 
 ## Commands
 
 ```bash
-python3 -m pytest tests/ -q                 # run all tests (fast, fully mocked — no network/credentials needed)
-python3 -m pytest tests/test_webhook.py -q  # one file
-python3 -m pytest tests/test_webhook.py::test_end_of_call_report_extracts_user_messages  # one test
+python3 -m pytest tests/ -q                       # full offline suite — no network or credentials
+python3 -m pytest tests/test_gemini_live.py -q    # one file
+python3 -m pytest "tests/test_tasks.py::test_submit_runs_task_and_reports_completion"  # one test
 
-./cc-caller --bridge --sip                  # run the app (best mode: persistent SIP session via Linphone)
-./cc-caller --pwa                           # browser PWA mode
-./cc-caller --mode always "task"            # Twilio outbound phone call mode
+./cc-caller                   # default mode: Gemini PWA (dev wrapper; installs get the console script)
+./cc-caller setup             # onboarding wizard — Gemini key → ~/.config/cc-caller/.env
+./cc-caller --sip --inbound   # legacy VAPI SIP transport (needs VAPI credentials)
+pip install -e ".[dev]"       # dev install; pyproject.toml is the single dependency source
 ```
 
-Target Python is 3.9 — no `match`, no `X | Y` type unions. Requires `claude` CLI on PATH and `cloudflared` (default tunnel) for live runs. Credentials live in `.env` (loaded from this repo's directory by `cc-caller` wrapper, so the CLI works from any project directory — Claude then works in *that* cwd).
+Python 3.9 compatible — no `match`, no `X | Y` unions. Live runs need the `claude` CLI and `cloudflared` on PATH.
 
 ## Architecture
 
-**`cc_caller.py`** — orchestrator and CLI entry point. `main()` parses flags, starts the FastAPI server in a daemon thread, opens a tunnel (cloudflared/ngrok), then branches into one large per-mode block (`--pwa`, `--sip`, `--bridge`, outbound loop). Each mode block wires its own closures (`handle_tool_call`, `on_webhook_event`) into `app.state`. Also owns the Claude worker subprocess logic:
-- `run_claude()` shells out to `claude -p --resume <session-uuid>`; on error it auto-recovers with a fresh session. Session IDs are deterministic UUIDs derived from a name (`name_to_uuid`), so sessions persist across restarts.
-- The worker is sandboxed: `WORKER_SYSTEM_PROMPT` + `--disallowedTools` prevent the worker Claude from invoking cc-caller/VAPI itself (a real bug that happened).
-- Small `claude -p` judge calls classify things: `check_needs_input()`, `is_termination()`, `clean_transcript()`.
-
-**`webhook.py`** — `create_app(transcript_queue)` builds the FastAPI app. Two endpoints matter most:
-- `POST /tool-call` — VAPI's `askCodingAgent` server tool lands here; it calls `app.state.handle_tool_call` (set by the active mode in cc_caller.py) via `run_in_executor` so webhook events aren't blocked while Claude works. VAPI's tool timeout is ~40s; long tasks return "still working" and deliver results via the hybrid callback path.
-- `POST /webhook` — VAPI lifecycle events. End-of-call reports push the joined user transcript onto `transcript_queue` (consumed by the outbound call loop) and fire `app.state.on_webhook_event` so hybrid mode detects hang-ups mid-task.
-- The rest of the file is mostly inline HTML pages for the browser modes (`/call`, `/call-bridge`, `/pwa`, etc.) plus PWA plumbing (`/sw.js`, `/push-subscribe`).
-
-**`vapi_client.py`** — pure VAPI REST helpers: assistant config builders (`build_persistent_sip_config` is the tool-based persistent assistant; gpt-4o-mini relay + `askCodingAgent`/`endCall` tools, Deepgram transcriber, ElevenLabs voice), inbound number configure/clear, call creation. Stale assistants are cleared on every startup because crashes used to leave numbers pointing at dead webhooks.
-
-**Hybrid callback flow** (the trickiest cross-file behavior): user gives a task and hangs up → `end-of-call-report` clears `call_active` while `task_in_progress` is set → when Claude finishes, the result is stored as `pending_result` and the user is notified (ntfy + SIP number reconfigured with a callback assistant for SIP; web push for PWA) → user redials and the result is read immediately. A `tool_lock` serializes tool calls — concurrent `claude --resume` calls on the same session corrupt it.
-
-**Secondary/legacy paths**: `gemini_bridge.py` (server-side Gemini Live WebSocket bridge, `--bridge` without `--sip`), `livekit_*.py` (abandoned for SIP due to NAT issues, kept for future use), `summarizer.py` (voice-friendly summaries via `claude -p`).
+- `cc_caller/cli.py` — entry point. `setup` wizard; legacy-flag dispatch (`LEGACY_TRIGGERS`) to `legacy_cli`; default `run_gemini_pwa`: preflights → VAPID → per-run token → TaskManager → token-gated server in a uvicorn thread → tunnel → QR. `make_on_complete` routes finished tasks: live session via `deliver_result` (INTERRUPT), otherwise web push + ntfy with the result kept pending.
+- `cc_caller/gemini_live.py` — `GeminiLiveSession`: the Gemini Live WS protocol. Three declared tools (`askCodingAgent` NON_BLOCKING, `checkStatus`, `endSession`), audio relay, captions, thread-safe `deliver_result`. The ack-gate (`_ack_sent` asyncio.Event) guarantees the interim ack hits the wire before the final INTERRUPT — do not reorder it. Falls back to `clientContent` injection if the model rejects NON_BLOCKING declarations.
+- `cc_caller/server.py` — token-gated FastAPI: `/ws` bridge, `/api/config`, `/api/push-subscribe`; only static assets are public. `build_system_prompt` injects last-5 history + any pending result into each new session.
+- `cc_caller/tasks.py` — `TaskManager`: one Claude task at a time, worker thread, `pending` result consumed via `take_pending()` by whichever path actually delivers. `on_complete` fires after lock release.
+- `cc_caller/claude_worker.py` — sandboxed `claude -p` subprocess layer: deterministic session UUIDs, auto-recovery on session errors, judge prompts. `WORKER_SYSTEM_PROMPT` + `--disallowedTools` stop the worker Claude from invoking cc-caller/VAPI itself (a real bug that happened).
+- `cc_caller/config.py`, `push.py`, `notify.py`, `tunnel.py` — config precedence (`~/.config/cc-caller/.env` → repo-checkout `.env` → cwd `.env`), Web Push + VAPID + `subscriptions.json` (written 0600, atomic), ntfy, cloudflared/ngrok tunnels.
+- `cc_caller/legacy_cli.py` + `cc_caller/vapi/` — legacy VAPI transports (SIP via Linphone, Twilio phone loop, VAPI web PWA). `webhook.py` keeps `/webhook`, `/tool-call`, and the `/pwa` page.
+- `cc_caller/static/` — the PWA: `app.js` (WS bridge, captions, wake lock, push), `audio-worklet.js` (16kHz PCM capture; playback is 24kHz), `sw.js`, manifest.
+- `experiments/` — archived dead ends (pre-tool-calling Gemini bridge, LiveKit). Not shipped, not wired, need extra deps.
 
 ## Constraints worth knowing
 
-- VAPI cannot make outbound SIP calls — SIP callback is ntfy-notification + user redials; don't "fix" this with an outbound SIP attempt.
-- Callbacks must stay on the transport the user used (no cross-transport fallback) — this was a deliberate fix.
-- Worker-protected files: `DISALLOWED_FILES` in cc_caller.py lists files the worker Claude must never touch.
-- Tasks and results are appended to `.cc-caller-log` in the cwd where cc-caller runs.
-- Tests mock all subprocess/HTTP boundaries (`unittest.mock.patch`, FastAPI `TestClient`) — keep new tests offline-safe.
+- Tests are offline by design (`tests/fake_gemini.py` is an in-process Gemini Live WS fake) — keep new tests offline-safe.
+- `deliver_result` returning False means UNDELIVERED — callers MUST fall back to pending/push (contract in its docstring). Only call `take_pending()` after confirmed delivery; pending results must survive the push-fallback path because the next session's opening prompt reads them.
+- The async tool-call wire format (`willContinue`/`scheduling`) is verified against the real API only in manual testing; the `clientContent` fallback absorbs differences.
+- The repo-checkout `.env` contains real credentials — never run legacy VAPI flags casually; the test suite never needs it.
+- Tasks and results append to `.cc-caller-log` in the cwd where cc-caller runs.

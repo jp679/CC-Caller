@@ -6,7 +6,6 @@ import threading
 import time
 import uuid
 from enum import Enum
-from typing import Optional
 
 import uvicorn
 from dotenv import load_dotenv
@@ -419,30 +418,6 @@ def main():
             clear_inbound_number(api_key, sip_phone_number_id)
             cleanup_tunnel()
         return
-
-    elif args.inbound and args.sip:
-        print("\n--- SIP inbound mode ---")
-        inbound_config = build_inbound_assistant_config(webhook_url)
-        configure_inbound_number(api_key, sip_phone_number_id, inbound_config)
-        print(f"Dial {sip_uri} from Linphone/Zoiper to start a task. Waiting...")
-        send_notification(
-            title="CC-Caller Ready",
-            message="Tap to connect",
-            url=sip_uri,
-        )
-        try:
-            instruction = transcript_queue.get()
-        except KeyboardInterrupt:
-            print("\nInterrupted while waiting. Exiting.")
-            clear_inbound_number(api_key, sip_phone_number_id)
-            cleanup_tunnel()
-            return
-        print(f"You said: {instruction}")
-        if is_termination(instruction):
-            print("Termination signal received. Exiting.")
-            clear_inbound_number(api_key, sip_phone_number_id)
-            cleanup_tunnel()
-            return
 
     elif args.inbound:
         print("\n--- Inbound mode: configuring phone number ---")
