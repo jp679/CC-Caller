@@ -68,3 +68,11 @@ def test_completion_callback_errors_do_not_break_manager():
         assert done.wait(timeout=5)
         # lock must have been released despite the callback raising
         assert tm.submit("next task") is True
+
+
+def test_take_pending_when_empty_returns_none():
+    p1, p2, p3, p4 = _patches()
+    with p1, p2, p3, p4:
+        tm = TaskManager()
+        assert tm.take_pending() is None
+        assert tm.pending is None

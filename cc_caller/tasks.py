@@ -19,6 +19,7 @@ class TaskManager:
         self.pending = None        # {"task", "summary", "detail", "meta"} until consumed
         self.on_complete = None    # Callable[[dict], None], set by wiring
         self._lock = threading.Lock()
+        self._state_lock = threading.Lock()  # guards pending + history (NOT _lock: held for task duration)
         self._started_at = None
         self.current_task = None
 
@@ -28,9 +29,10 @@ class TaskManager:
 
     @property
     def elapsed(self):
-        if self._started_at is None:
+        started = self._started_at  # snapshot: worker thread may None this between reads
+        if started is None:
             return None
-        return time.time() - self._started_at
+        return time.time() - started
 
     def submit(self, task, meta=None):
         """Start a task. Returns False if one is already running."""
@@ -43,8 +45,9 @@ class TaskManager:
         return True
 
     def take_pending(self):
-        result, self.pending = self.pending, None
-        return result
+        with self._state_lock:
+            result, self.pending = self.pending, None
+            return result
 
     def _run(self, task, meta):
         try:
@@ -57,12 +60,15 @@ class TaskManager:
             summary = summarize_output(output)["summary"]
             log_interaction(cleaned, output)
             result = {"task": task, "summary": summary, "detail": output, "meta": meta}
-            self.history.append({"task": task, "summary": summary})
-            self.pending = result
+            with self._state_lock:
+                self.history.append({"task": task, "summary": summary})
+                del self.history[:-50]   # bound growth; consumers read history[-5:]
+                self.pending = result
         except Exception as e:
             result = {"task": task, "summary": "The task failed: {}".format(e),
                       "detail": str(e), "meta": meta}
-            self.pending = result
+            with self._state_lock:
+                self.pending = result
         finally:
             self._started_at = None
             self.current_task = None
