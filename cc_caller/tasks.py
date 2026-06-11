@@ -112,10 +112,14 @@ class TaskManager:
             cleaned = clean_transcript(task)
             if self.show_exchange:
                 print("[task] -> {}".format(cleaned))
+            fresh_id = None
+            if self.session_name and self.session_id == name_to_uuid(self.session_name):
+                fresh_id = self.session_id
             output, self.session_id = run_claude(
                 cleaned, self.session_id,
                 session_name=self.session_name, is_first_run=self.first_run,
                 on_activity=self._set_activity, cwd=self.workdir,
+                fresh_session_id=fresh_id,
             )
             self.first_run = False
             summary = summarize_output(output)["summary"]

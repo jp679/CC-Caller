@@ -35,6 +35,20 @@ def test_no_session_falls_back_to_push_and_ntfy():
     tm.take_pending.assert_not_called()
 
 
+def test_no_session_fallback_logs_subscription_count(monkeypatch, capsys):
+    tm = MagicMock()
+    state = _state(None)
+    state.subscriptions = [{"endpoint": "e1"}, {"endpoint": "e2"}]
+    monkeypatch.setenv("NTFY_TOPIC", "my-topic")
+    with patch("cc_caller.cli.push"), patch("cc_caller.cli.notify"):
+        cb = make_on_complete(state, tm, public_url="https://x", vapid_priv="PK")
+        cb({"task": "t", "summary": "done!", "detail": "", "meta": {}})
+    out = capsys.readouterr().out
+    assert "[notify] no live session" in out
+    assert "2 subscription(s)" in out
+    assert "my-topic" in out
+
+
 def test_failed_live_delivery_falls_back_to_push():
     session = MagicMock()
     session.alive = True

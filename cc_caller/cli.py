@@ -107,6 +107,9 @@ RELAY_SYSTEM_PROMPT = (
     "acknowledge briefly (e.g. 'On it -- sending that to Claude').\n"
     "- When a result arrives, read the summary conversationally. Never read "
     "code, file paths, or stack traces aloud verbatim.\n"
+    "- Never invent or assume a task result. If you don't have the result in "
+    "your context, say so plainly and offer to check: use checkStatus, or ask "
+    "Claude again. Results can belong to a different session than this one.\n"
     "- Use checkStatus if the user asks how the task is going.\n"
     "- If the conversation context below already answers a follow-up, answer "
     "directly without calling askCodingAgent again.\n"
@@ -135,6 +138,8 @@ def make_on_complete(state, task_manager, public_url, vapid_priv):
         if session is not None and session.alive and session.deliver_result(result["summary"]):
             task_manager.take_pending()
             return
+        print("[notify] no live session — push to {} subscription(s); ntfy topic: {}".format(
+            len(state.subscriptions), os.getenv("NTFY_TOPIC", "cc-caller")))
         push.send_web_push(
             state.subscriptions, "Claude finished",
             result["summary"][:160], url, vapid_priv,

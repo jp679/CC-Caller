@@ -239,7 +239,7 @@ def test_activity_visible_during_task_and_cleared_after(monkeypatch, tmp_path):
     seen = {}
 
     def slow_run(instruction, session_id, session_name=None, is_first_run=False,
-                 on_activity=None, cwd=None):
+                 on_activity=None, cwd=None, fresh_session_id=None):
         on_activity("Edit cc_caller/server.py")
         seen["cwd"] = cwd
         mid_task.set()
@@ -268,3 +268,44 @@ def test_workdir_pinned_at_init(monkeypatch, tmp_path):
         import os
         tm = TaskManager()
         assert tm.workdir == os.getcwd()
+
+
+def test_name_bound_manager_passes_fresh_session_id(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    from cc_caller.claude_worker import name_to_uuid
+    seen = {}
+
+    def spy_run(instruction, session_id, session_name=None, is_first_run=False,
+                on_activity=None, cwd=None, fresh_session_id=None):
+        seen["fresh"] = fresh_session_id
+        return ("out", session_id or "sid")
+
+    done = threading.Event()
+    p1, p2, p3, p4 = _patches()
+    with p1, patch("cc_caller.tasks.run_claude", side_effect=spy_run), p3, p4:
+        tm = TaskManager(session_name="myproj")
+        tm.on_complete = lambda r: done.set()
+        tm.submit("task")
+        assert done.wait(timeout=5)
+    assert seen["fresh"] == name_to_uuid("myproj")
+
+
+def test_picked_session_does_not_pass_fresh_session_id(monkeypatch, tmp_path):
+    # TaskManager(session_name="x", session_id="picked-raw-id"):
+    # session_name is truthy but session_id != name_to_uuid("x") → fresh_id must be None
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    seen = {}
+
+    def spy_run(instruction, session_id, session_name=None, is_first_run=False,
+                on_activity=None, cwd=None, fresh_session_id=None):
+        seen["fresh"] = fresh_session_id
+        return ("out", session_id or "sid")
+
+    done = threading.Event()
+    p1, p2, p3, p4 = _patches()
+    with p1, patch("cc_caller.tasks.run_claude", side_effect=spy_run), p3, p4:
+        tm = TaskManager(session_name="x", session_id="picked-raw-id")
+        tm.on_complete = lambda r: done.set()
+        tm.submit("task")
+        assert done.wait(timeout=5)
+    assert seen["fresh"] is None

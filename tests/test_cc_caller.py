@@ -131,3 +131,50 @@ def test_check_needs_input_runs_outside_project(tmp_path):
         from cc_caller.claude_worker import check_needs_input
         check_needs_input("some output")
     assert mock_run.call_args[1].get("cwd") == tempfile.gettempdir()
+
+
+def test_run_claude_fresh_create_uses_provided_id():
+    captured = {}
+
+    def spy_query(prompt, options):
+        captured.setdefault("calls", []).append(
+            {"resume": options.resume, "session_id": options.session_id})
+
+        async def gen():
+            from claude_agent_sdk import ResultMessage, SystemMessage
+            if options.resume:
+                raise RuntimeError("No conversation found with session ID")
+            yield SystemMessage(subtype="init",
+                                data={"session_id": options.session_id or "anon-1"})
+            yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1,
+                                is_error=False, num_turns=1,
+                                session_id=options.session_id or "anon-1", result="ok")
+        return gen()
+
+    with patch("cc_caller.claude_worker.query", new=spy_query):
+        out, sid = run_claude("do it", "name-uuid-123", fresh_session_id="name-uuid-123")
+    assert sid == "name-uuid-123"
+    assert captured["calls"][0] == {"resume": "name-uuid-123", "session_id": None}
+    assert captured["calls"][1] == {"resume": None, "session_id": "name-uuid-123"}
+
+
+def test_run_claude_fresh_without_id_stays_anonymous():
+    captured = {}
+
+    def spy_query(prompt, options):
+        captured.setdefault("calls", []).append(
+            {"resume": options.resume, "session_id": options.session_id})
+
+        async def gen():
+            from claude_agent_sdk import ResultMessage, SystemMessage
+            if options.resume:
+                raise RuntimeError("No conversation found with session ID")
+            yield SystemMessage(subtype="init", data={"session_id": "anon-1"})
+            yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1,
+                                is_error=False, num_turns=1, session_id="anon-1", result="ok")
+        return gen()
+
+    with patch("cc_caller.claude_worker.query", new=spy_query):
+        out, sid = run_claude("do it", "dead-session")
+    # fresh attempt must not specify a session_id (anonymous)
+    assert captured["calls"][1] == {"resume": None, "session_id": None}

@@ -202,6 +202,7 @@ async function connect() {
       const s = msg.session || {};
       $('session-label').textContent = (chosenSession && chosenSession.label) ||
         s.name || (s.id ? s.id.slice(0, 8) : '');
+      chosenSession = null;
       setStatus('live', 'live');
       $('sessions').classList.add('hidden');
       $('connect').textContent = 'Hang up';

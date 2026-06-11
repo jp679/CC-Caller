@@ -107,12 +107,13 @@ def _describe_tool_use(block):
     return text[:80]
 
 
-async def _run_task(instruction, resume_id, on_activity, cwd):
+async def _run_task(instruction, resume_id, on_activity, cwd, create_id=None):
     options = ClaudeAgentOptions(
         system_prompt={"type": "preset", "preset": "claude_code",
                        "append": WORKER_SYSTEM_PROMPT},
         disallowed_tools=DISALLOWED_TOOL_PATTERNS,
         resume=resume_id,
+        session_id=create_id if (create_id and not resume_id) else None,
         cwd=str(cwd) if cwd else None,
     )
     session_id = resume_id
@@ -138,11 +139,15 @@ async def _run_task(instruction, resume_id, on_activity, cwd):
 
 
 def run_claude(instruction, session_id, session_name=None, is_first_run=False,
-               on_activity=None, cwd=None):
+               on_activity=None, cwd=None, fresh_session_id=None):
     """Run one task against a (resumable) Claude session via the Agent SDK.
 
     Returns (output_text, session_id). session_name is retained for
     compatibility; the SDK has no session-naming concept.
+
+    fresh_session_id: when a fresh session must be created (no resume, or
+    resume failed), create it WITH this id so deterministic name→id bindings
+    hold.
 
     Resume semantics: when session_id is given we attempt a resume; if the SDK
     raises for any reason (process/connection error, or a WorkerTaskError from
@@ -158,7 +163,8 @@ def run_claude(instruction, session_id, session_name=None, is_first_run=False,
         except Exception as e:
             print("[worker] resume of {} failed ({}); starting a fresh session".format(
                 session_id[:8], type(e).__name__))
-    output, new_id = asyncio.run(_run_task(instruction, None, on_activity, cwd))
+    output, new_id = asyncio.run(
+        _run_task(instruction, None, on_activity, cwd, create_id=fresh_session_id))
     if session_id and new_id != session_id:
         print("New session: {}".format(new_id))
     return output, new_id
