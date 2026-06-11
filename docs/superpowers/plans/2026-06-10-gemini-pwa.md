@@ -21,6 +21,17 @@ Everything moves into a `cc_caller/` package. The old top-level module `cc_calle
 - Move: `cc_caller.py` → `cc_caller/legacy_cli.py`, `webhook.py` → `cc_caller/vapi/webhook.py`, `vapi_client.py` → `cc_caller/vapi/client.py`, `summarizer.py` → `cc_caller/summarizer.py`, `gemini_bridge.py` → `cc_caller/vapi/gemini_bridge.py`, `static/` → `cc_caller/static/`
 - Modify: `cc-caller` (wrapper), `tests/test_cc_caller.py`, `tests/test_webhook.py`, `tests/test_summarizer.py`, `tests/test_vapi_client.py`
 
+- [ ] **Step 0: Commit the working baseline**
+
+The tree has uncommitted changes from the last working session, and `static/` + `CLAUDE.md` are untracked — `git mv` fails on untracked files. Snapshot the known-working state first:
+
+```bash
+cd /Users/JP_1/Dev/CC-Caller
+python3 -m pytest tests/ -q   # confirm the baseline is green before touching anything
+git add -A
+git commit -m "chore: baseline — last working state before package restructure"
+```
+
 - [ ] **Step 1: Create the package and move files**
 
 ```bash
@@ -2086,6 +2097,17 @@ def run_gemini_pwa(args):
               "(free key: https://aistudio.google.com/apikey)")
         return 1
 
+    import shutil
+    if not shutil.which("claude"):
+        print("The `claude` CLI is required: https://claude.com/claude-code")
+        return 1
+    if not args.tunnel_url and args.tunnel == "cloudflare" and not shutil.which("cloudflared"):
+        print("cloudflared is required for the default tunnel:\n"
+              "  macOS:  brew install cloudflared\n"
+              "  Linux:  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/\n"
+              "Or use --tunnel ngrok / --tunnel-url https://your-domain")
+        return 1
+
     vapid_priv, vapid_pub = push.ensure_vapid_keys()
     token = secrets.token_urlsafe(32)
     task_manager = TaskManager(session_name=args.session, new_session=args.new_session)
@@ -2415,7 +2437,14 @@ This step verifies the live Gemini protocol assumptions (NON_BLOCKING/`willConti
 6. "End session" → agent says goodbye, call ends.
 7. Legacy check: `cc-caller --sip --inbound` still starts (VAPI creds present on this machine).
 
-- [ ] **Step 4: Commit any protocol fixes from Step 3, then tag**
+- [ ] **Step 4: Pre-publication secret scan (before the repo ever goes public)**
+
+```bash
+git log -p | grep -iE "api[_-]?key.*=|secret|token.*=|password" | grep -vE "your-|example|XXXX|test-key|VAPID_PUBLIC" | head -40
+```
+Expected: no real credentials. Any hit means that secret must be rotated at its provider AND the history cleaned (fresh squashed repo is the simple fix) before publishing. A dedicated scanner (`gitleaks detect`) is a stronger alternative if available.
+
+- [ ] **Step 5: Commit any protocol fixes from Step 3, then tag**
 
 ```bash
 git add -A && git commit -m "fix: live-API protocol adjustments from end-to-end run" # only if needed
