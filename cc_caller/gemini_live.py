@@ -49,6 +49,13 @@ END_SESSION = {
     "parameters": {"type": "OBJECT", "properties": {}},
 }
 
+CANCEL_TASK = {
+    "name": "cancelTask",
+    "description": "Cancel the coding task Claude is currently working on. "
+                   "Use when the user says stop, cancel, never mind, or similar.",
+    "parameters": {"type": "OBJECT", "properties": {}},
+}
+
 
 class GeminiLiveSession:
     """One Gemini Live conversation, bridged to one browser connection.
@@ -96,7 +103,7 @@ class GeminiLiveSession:
                 },
             },
             "systemInstruction": {"parts": [{"text": self.system_prompt}]},
-            "tools": [{"functionDeclarations": [ask, CHECK_STATUS, END_SESSION]}],
+            "tools": [{"functionDeclarations": [ask, CHECK_STATUS, CANCEL_TASK, END_SESSION]}],
             "realtimeInputConfig": {"automaticActivityDetection": {
                 "silenceDurationMs": int(os.getenv("GEMINI_VAD_SILENCE_MS", "2000")),
                 "prefixPaddingMs": 500,
@@ -231,10 +238,18 @@ class GeminiLiveSession:
             self._ack_sent = asyncio.Event()
             if not self.tm.submit(task, meta={"fc_id": fc_id}):
                 self._current_fc, self._ack_sent = prev_fc, prev_ack
-                await self._respond(fc_id, name, {
-                    "status": "busy",
-                    "message": "Still working on the previous task. Ask checkStatus for progress.",
-                })
+                queued = getattr(self.tm, "queue_next", lambda *a, **k: False)(task)
+                if queued:
+                    await self._respond(fc_id, name, {
+                        "status": "queued",
+                        "message": "Claude is busy; this task is queued to run next. "
+                                   "The result will be announced when it finishes.",
+                    })
+                else:
+                    await self._respond(fc_id, name, {
+                        "status": "busy",
+                        "message": "Still working on the previous task. Ask checkStatus for progress.",
+                    })
                 return
             await self.send_to_browser({"type": "status", "state": "working", "task": task})
             if self.show_exchange:
@@ -256,6 +271,14 @@ class GeminiLiveSession:
                 await self._respond(fc_id, name, response)
             else:
                 await self._respond(fc_id, name, {"working": False})
+        elif name == "cancelTask":
+            ok = getattr(self.tm, "cancel", lambda: False)()
+            if ok:
+                await self._respond(fc_id, name, {"cancelled": True})
+                await self.send_to_browser({"type": "status", "state": "done"})
+            else:
+                await self._respond(fc_id, name,
+                                    {"cancelled": False, "message": "Nothing is running."})
         elif name == "endSession":
             self.ended = True
             await self._respond(fc_id, name, {"status": "ending"})

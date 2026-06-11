@@ -1,4 +1,5 @@
 """Claude Code worker layer: sandboxed Agent SDK runs, sessions, judge prompts."""
+import asyncio
 import pathlib
 import subprocess
 import tempfile
@@ -95,6 +96,10 @@ class WorkerTaskError(RuntimeError):
     """A task run that completed with an error result."""
 
 
+class WorkerCancelled(RuntimeError):
+    """The in-flight SDK query was cancelled by a threading.Event."""
+
+
 def _describe_tool_use(block):
     """Short human string for an activity display: 'Edit cc_caller/server.py'."""
     target = ""
@@ -107,7 +112,8 @@ def _describe_tool_use(block):
     return text[:80]
 
 
-async def _run_task(instruction, resume_id, on_activity, cwd, create_id=None):
+async def _run_task(instruction, resume_id, on_activity, cwd, create_id=None,
+                   cancel_event=None):
     options = ClaudeAgentOptions(
         system_prompt={"type": "preset", "preset": "claude_code",
                        "append": WORKER_SYSTEM_PROMPT},
@@ -119,27 +125,47 @@ async def _run_task(instruction, resume_id, on_activity, cwd, create_id=None):
     session_id = resume_id
     texts = []
     result_text = None
-    async for message in query(prompt=instruction, options=options):
-        if isinstance(message, SystemMessage):
-            if message.subtype == "init" and message.data.get("session_id"):
-                session_id = message.data["session_id"]
-        elif isinstance(message, AssistantMessage):
-            for block in message.content:
-                if isinstance(block, TextBlock) and block.text:
-                    texts.append(block.text)
-                elif isinstance(block, ToolUseBlock) and on_activity:
-                    on_activity(_describe_tool_use(block))
-        elif isinstance(message, ResultMessage):
-            session_id = message.session_id or session_id
-            if message.is_error:
-                raise WorkerTaskError(
-                    message.result or "task failed ({})".format(message.subtype))
-            result_text = message.result
+
+    async def _consume():
+        nonlocal session_id, result_text
+        async for message in query(prompt=instruction, options=options):
+            if isinstance(message, SystemMessage):
+                if message.subtype == "init" and message.data.get("session_id"):
+                    session_id = message.data["session_id"]
+            elif isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock) and block.text:
+                        texts.append(block.text)
+                    elif isinstance(block, ToolUseBlock) and on_activity:
+                        on_activity(_describe_tool_use(block))
+            elif isinstance(message, ResultMessage):
+                session_id = message.session_id or session_id
+                if message.is_error:
+                    raise WorkerTaskError(
+                        message.result or "task failed ({})".format(message.subtype))
+                result_text = message.result
+
+    consume = asyncio.ensure_future(_consume())
+    try:
+        while not consume.done():
+            if cancel_event is not None and cancel_event.is_set():
+                consume.cancel()
+                try:
+                    await consume
+                except asyncio.CancelledError:
+                    pass
+                raise WorkerCancelled("cancelled by user")
+            await asyncio.wait({consume}, timeout=0.2)
+        await consume  # surface exceptions
+    finally:
+        if not consume.done():
+            consume.cancel()
+
     return (result_text or "\n".join(texts) or ""), session_id
 
 
 def run_claude(instruction, session_id, session_name=None, is_first_run=False,
-               on_activity=None, cwd=None, fresh_session_id=None):
+               on_activity=None, cwd=None, fresh_session_id=None, cancel_event=None):
     """Run one task against a (resumable) Claude session via the Agent SDK.
 
     Returns (output_text, session_id). session_name is retained for
@@ -149,6 +175,10 @@ def run_claude(instruction, session_id, session_name=None, is_first_run=False,
     resume failed), create it WITH this id so deterministic name→id bindings
     hold.
 
+    cancel_event: a threading.Event that, when set, cancels the in-flight SDK
+    query and raises WorkerCancelled. A cancel during a resume attempt
+    propagates immediately -- no fresh-session fallback.
+
     Resume semantics: when session_id is given we attempt a resume; if the SDK
     raises for any reason (process/connection error, or a WorkerTaskError from
     an error result such as "no conversation found") we fall back once to a
@@ -156,15 +186,19 @@ def run_claude(instruction, session_id, session_name=None, is_first_run=False,
     the WorkerTaskError propagates so TaskManager turns it into a spoken
     failure.
     """
-    import asyncio
     if session_id:
         try:
-            return asyncio.run(_run_task(instruction, session_id, on_activity, cwd))
+            return asyncio.run(
+                _run_task(instruction, session_id, on_activity, cwd,
+                          cancel_event=cancel_event))
+        except WorkerCancelled:
+            raise   # cancel during resume must NOT fall back to fresh session
         except Exception as e:
             print("[worker] resume of {} failed ({}); starting a fresh session".format(
                 session_id[:8], type(e).__name__))
     output, new_id = asyncio.run(
-        _run_task(instruction, None, on_activity, cwd, create_id=fresh_session_id))
+        _run_task(instruction, None, on_activity, cwd, create_id=fresh_session_id,
+                  cancel_event=cancel_event))
     if session_id and new_id != session_id:
         print("New session: {}".format(new_id))
     return output, new_id

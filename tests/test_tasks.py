@@ -239,7 +239,7 @@ def test_activity_visible_during_task_and_cleared_after(monkeypatch, tmp_path):
     seen = {}
 
     def slow_run(instruction, session_id, session_name=None, is_first_run=False,
-                 on_activity=None, cwd=None, fresh_session_id=None):
+                 on_activity=None, cwd=None, fresh_session_id=None, cancel_event=None):
         on_activity("Edit cc_caller/server.py")
         seen["cwd"] = cwd
         mid_task.set()
@@ -267,7 +267,7 @@ def test_on_activity_callback_invoked_and_errors_contained(monkeypatch, tmp_path
     seen = []
 
     def spy_run(instruction, session_id, session_name=None, is_first_run=False,
-                on_activity=None, cwd=None, fresh_session_id=None):
+                on_activity=None, cwd=None, fresh_session_id=None, cancel_event=None):
         on_activity("Edit a.py")
         return ("out", "sid")
 
@@ -303,7 +303,7 @@ def test_name_bound_manager_passes_fresh_session_id(monkeypatch, tmp_path):
     seen = {}
 
     def spy_run(instruction, session_id, session_name=None, is_first_run=False,
-                on_activity=None, cwd=None, fresh_session_id=None):
+                on_activity=None, cwd=None, fresh_session_id=None, cancel_event=None):
         seen["fresh"] = fresh_session_id
         return ("out", session_id or "sid")
 
@@ -324,7 +324,7 @@ def test_picked_session_does_not_pass_fresh_session_id(monkeypatch, tmp_path):
     seen = {}
 
     def spy_run(instruction, session_id, session_name=None, is_first_run=False,
-                on_activity=None, cwd=None, fresh_session_id=None):
+                on_activity=None, cwd=None, fresh_session_id=None, cancel_event=None):
         seen["fresh"] = fresh_session_id
         return ("out", session_id or "sid")
 

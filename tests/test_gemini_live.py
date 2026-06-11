@@ -8,15 +8,26 @@ from tests.fake_gemini import FakeGemini
 
 
 class StubTM:
-    def __init__(self, accept=True):
+    def __init__(self, accept=True, queue_accepts=True):
         self.accept = accept
+        self.queue_accepts = queue_accepts
         self.submitted = []
+        self.queued = []
         self.busy = False
         self.elapsed = None
+        self._cancel_called = False
 
     def submit(self, task, meta=None):
         self.submitted.append((task, meta))
         return self.accept
+
+    def queue_next(self, task, meta=None):
+        self.queued.append((task, meta))
+        return self.queue_accepts
+
+    def cancel(self):
+        self._cancel_called = True
+        return self.busy  # True only if busy
 
 
 class Harness:
@@ -66,7 +77,7 @@ async def test_handshake_declares_non_blocking_tools():
         setup = fake.received_of("setup")[0]["setup"]
         decls = setup["tools"][0]["functionDeclarations"]
         names = [d["name"] for d in decls]
-        assert names == ["askCodingAgent", "checkStatus", "endSession"]
+        assert names == ["askCodingAgent", "checkStatus", "cancelTask", "endSession"]
         assert decls[0]["behavior"] == "NON_BLOCKING"
         assert setup["systemInstruction"]["parts"][0]["text"] == "PROMPT"
         assert h.session.async_tools is True
@@ -143,9 +154,26 @@ async def test_tool_call_acks_interim_then_delivers_interrupt():
         await h.stop()
 
 
-async def test_busy_manager_returns_busy_response():
+async def test_busy_manager_queues_task_when_queue_available():
+    """When submit returns False (busy) and queue_next accepts, response is 'queued'."""
     async with FakeGemini() as fake:
-        h = Harness(fake, StubTM(accept=False))
+        h = Harness(fake, StubTM(accept=False, queue_accepts=True))
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "f9", "name": "askCodingAgent", "args": {"task": "another"}}
+        ]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        resp = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        assert resp["response"]["status"] == "queued"
+        assert "willContinue" not in resp
+        await h.stop()
+
+
+async def test_busy_manager_returns_busy_when_queue_unavailable():
+    """When submit returns False and queue_next also returns False, response is 'busy'."""
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM(accept=False, queue_accepts=False))
         h.start()
         await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
         await fake.send({"toolCall": {"functionCalls": [
@@ -441,3 +469,45 @@ async def test_notify_activity_noop_when_dead():
         send_to_browser=lambda m: None,
     )
     session.notify_activity("anything")
+
+
+async def test_cancel_task_when_busy_sends_cancelled_true_and_status_done():
+    """cancelTask while tm.busy=True: response has cancelled=True, browser gets status done."""
+    tm = StubTM()
+    tm.busy = True  # pretend busy so cancel() returns True
+    async with FakeGemini() as fake:
+        h = Harness(fake, tm)
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "c1", "name": "cancelTask", "args": {}}
+        ]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        resp = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        assert resp["response"]["cancelled"] is True
+        assert "message" not in resp["response"]
+        assert any(m.get("type") == "status" and m.get("state") == "done"
+                   for m in h.to_browser)
+        assert tm._cancel_called is True
+        await h.stop()
+
+
+async def test_cancel_task_when_idle_sends_cancelled_false():
+    """cancelTask while idle: response has cancelled=False with a message."""
+    tm = StubTM()
+    tm.busy = False  # idle
+    async with FakeGemini() as fake:
+        h = Harness(fake, tm)
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "c2", "name": "cancelTask", "args": {}}
+        ]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        resp = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        assert resp["response"]["cancelled"] is False
+        assert "message" in resp["response"]
+        # No status:done sent when idle
+        assert not any(m.get("type") == "status" and m.get("state") == "done"
+                       for m in h.to_browser)
+        await h.stop()

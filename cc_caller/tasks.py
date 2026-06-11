@@ -6,7 +6,7 @@ from typing import Callable, Optional
 
 from cc_caller import callermem
 from cc_caller.claude_worker import (
-    clean_transcript, log_interaction, name_to_uuid, run_claude,
+    clean_transcript, log_interaction, name_to_uuid, run_claude, WorkerCancelled,
 )
 from cc_caller.summarizer import summarize_output
 
@@ -27,6 +27,8 @@ class TaskManager:
         self.on_activity = None    # Callable[[str], None], set by wiring
         self._lock = threading.Lock()
         self._state_lock = threading.Lock()  # guards pending + history (NOT _lock: held for task duration)
+        self._cancel_event = threading.Event()
+        self._queued = None
         self._started_at = None
         self.current_task = None
         self.current_activity = None
@@ -51,6 +53,7 @@ class TaskManager:
         """Start a task. Returns False if one is already running."""
         if not self._lock.acquire(blocking=False):
             return False
+        self._cancel_event.clear()
         self._started_at = time.time()
         self.current_task = task
         thread = threading.Thread(target=self._run, args=(task, meta or {}), daemon=True)
@@ -63,6 +66,24 @@ class TaskManager:
             hist = list(self.history)
         self._persist(hist, None)
         return result
+
+    def cancel(self):
+        """Cancel the running task (and drop any queued one). Returns False if idle."""
+        with self._state_lock:
+            self._queued = None
+        if not self.busy:
+            return False
+        self._cancel_event.set()
+        return True
+
+    def queue_next(self, task, meta=None):
+        """Queue ONE follow-up task to run when the current one finishes.
+        Returns False if nothing is running (caller should submit instead)."""
+        if not self.busy:
+            return False
+        with self._state_lock:
+            self._queued = (task, meta or {})
+        return True
 
     def switch_session(self, session_id=None, session_name=None):
         """Rebind to another Claude session. Refused (False) while a task runs.
@@ -126,6 +147,7 @@ class TaskManager:
                 session_name=self.session_name, is_first_run=self.first_run,
                 on_activity=self._set_activity, cwd=self.workdir,
                 fresh_session_id=fresh_id,
+                cancel_event=self._cancel_event,
             )
             self.first_run = False
             summary = summarize_output(output)["summary"]
@@ -139,6 +161,10 @@ class TaskManager:
                 self.pending = result
                 hist, pend = list(self.history), self.pending
             self._persist(hist, pend)
+        except WorkerCancelled:
+            result = {"task": task, "summary": "Task cancelled.", "detail": "",
+                      "meta": meta, "cancelled": True}
+            # Do NOT set pending, do NOT append to history, do NOT persist
         except Exception as e:
             if self.show_exchange:
                 print("[task] FAILED: {}".format(e))
@@ -158,3 +184,7 @@ class TaskManager:
                 self.on_complete(result)
             except Exception as e:
                 print("[tasks] on_complete error: {}".format(e))
+        with self._state_lock:
+            queued, self._queued = self._queued, None
+        if queued:
+            self.submit(queued[0], meta=queued[1])

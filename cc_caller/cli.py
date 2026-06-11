@@ -111,6 +111,7 @@ RELAY_SYSTEM_PROMPT = (
     "your context, say so plainly and offer to check: use checkStatus, or ask "
     "Claude again. Results can belong to a different session than this one.\n"
     "- Use checkStatus if the user asks how the task is going.\n"
+    "- If the user says stop, cancel, or never mind about a running task, call cancelTask.\n"
     "- If the conversation context below already answers a follow-up, answer "
     "directly without calling askCodingAgent again.\n"
     "- When the user says they are done ('goodbye', 'end session'), call "
@@ -133,9 +134,14 @@ def build_base_prompt():
 def make_on_complete(state, task_manager, public_url, vapid_priv):
     """Route a finished task: live session first, push + ntfy otherwise."""
     def on_complete(result):
-        url = "{}/?callback=1&token={}".format(public_url, state.token)
         session = state.session_holder.get("session")
-        if session is not None and session.alive and session.deliver_result(result["summary"]):
+        live = session is not None and getattr(session, "alive", False)
+        if result.get("cancelled"):
+            if live:
+                session.deliver_result(result["summary"])
+            return
+        url = "{}/?callback=1&token={}".format(public_url, state.token)
+        if live and session.deliver_result(result["summary"]):
             task_manager.take_pending()
             return
         print("[notify] no live session — push to {} subscription(s); ntfy topic: {}".format(
