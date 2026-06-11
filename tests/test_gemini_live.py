@@ -198,3 +198,96 @@ async def test_check_status_and_end_session():
         await asyncio.wait_for(h.run_task, timeout=3)
         assert h.session.alive is False
         assert h.session.ended is True
+
+
+async def test_instant_completion_does_not_overtake_interim_ack():
+    ref = {}
+
+    class InstantTM(StubTM):
+        def submit(self, task, meta=None):
+            super().submit(task, meta)
+            self.thread = threading.Thread(
+                target=ref["s"].deliver_result, args=("instant",))
+            self.thread.start()
+            return True
+
+    async with FakeGemini() as fake:
+        tm = InstantTM()
+        h = Harness(fake, tm)
+        ref["s"] = h.session
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "f1", "name": "askCodingAgent", "args": {"task": "quick"}}]}})
+        await wait_until(lambda: len(fake.received_of("toolResponse")) >= 2)
+        first = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        second = fake.received_of("toolResponse")[1]["toolResponse"]["functionResponses"][0]
+        assert first["willContinue"] is True
+        assert first["response"]["status"] == "started"
+        assert second["scheduling"] == "INTERRUPT"
+        assert second["response"]["result"] == "instant"
+        tm.thread.join(timeout=5)
+        await h.stop()
+
+
+async def test_result_ready_during_pre_ack_await_still_ordered():
+    """Deterministic overtake repro: send_to_browser suspends (like a real
+    browser socket) and the worker finishes before the interim ack is sent.
+    Without the ack gate, the final INTERRUPT reaches the wire first."""
+    import time
+    ref = {}
+
+    class BlockingInstantTM(StubTM):
+        def submit(self, task, meta=None):
+            super().submit(task, meta)
+            self.thread = threading.Thread(
+                target=ref["s"].deliver_result, args=("instant",))
+            self.thread.start()
+            time.sleep(0.05)  # loop thread blocked: _deliver is now scheduled
+            return True
+
+    async with FakeGemini() as fake:
+        tm = BlockingInstantTM()
+        h = Harness(fake, tm)
+
+        async def yielding_send(msg):
+            await asyncio.sleep(0.01)  # a real browser socket suspends here
+            h.to_browser.append(msg)
+
+        h.session.send_to_browser = yielding_send
+        ref["s"] = h.session
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "f1", "name": "askCodingAgent", "args": {"task": "quick"}}]}})
+        await wait_until(lambda: len(fake.received_of("toolResponse")) >= 2)
+        first = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        second = fake.received_of("toolResponse")[1]["toolResponse"]["functionResponses"][0]
+        assert first["response"].get("status") == "started", \
+            "final overtook interim: {}".format(first)
+        assert first["willContinue"] is True
+        assert second.get("scheduling") == "INTERRUPT"
+        assert second["response"]["result"] == "instant"
+        # No blocking join on the loop thread: _deliver still needs the loop
+        # for its final send_to_browser before the worker's future resolves.
+        await wait_until(lambda: not tm.thread.is_alive())
+        await h.stop()
+
+
+async def test_connect_failure_raises_runtime_error():
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()  # nothing listening on this port now
+
+    async def no_messages():
+        return
+        yield  # pragma: no cover
+
+    session = GeminiLiveSession(
+        api_key="k", system_prompt="P", task_manager=StubTM(),
+        send_to_browser=lambda m: None, ws_url="ws://127.0.0.1:{}".format(port),
+    )
+    with pytest.raises(RuntimeError):
+        await session.run(no_messages())

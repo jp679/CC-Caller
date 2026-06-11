@@ -72,6 +72,7 @@ class GeminiLiveSession:
         self._ws = None
         self._loop = None
         self._current_fc = None      # {"id", "name"} of the in-flight askCodingAgent
+        self._ack_sent = None        # Event: interim ack on the wire; gates _deliver
         self._cancelled = set()
 
     # -- setup ---------------------------------------------------------------
@@ -112,7 +113,7 @@ class GeminiLiveSession:
                 if "setupComplete" in json.loads(raw):
                     return ws
                 await ws.close()
-            except websockets.ConnectionClosed:
+            except (websockets.ConnectionClosed, websockets.exceptions.InvalidHandshake, OSError):
                 continue
         raise RuntimeError("Gemini Live setup failed with and without NON_BLOCKING tools")
 
@@ -194,13 +195,19 @@ class GeminiLiveSession:
         args = fc.get("args") or {}
         if name == "askCodingAgent":
             task = args.get("task", "")
+            # Gate set up BEFORE submit: an instantly-completing worker may call
+            # deliver_result during any await below; _deliver waits on _ack_sent
+            # so the final response can never overtake the interim ack.
+            prev_fc, prev_ack = self._current_fc, self._ack_sent
+            self._current_fc = {"id": fc_id, "name": name}
+            self._ack_sent = asyncio.Event()
             if not self.tm.submit(task, meta={"fc_id": fc_id}):
+                self._current_fc, self._ack_sent = prev_fc, prev_ack
                 await self._respond(fc_id, name, {
                     "status": "busy",
                     "message": "Still working on the previous task. Ask checkStatus for progress.",
                 })
                 return
-            self._current_fc = {"id": fc_id, "name": name}
             await self.send_to_browser({"type": "status", "state": "working", "task": task})
             if self.async_tools:
                 await self._respond(fc_id, name, {"status": "started"}, will_continue=True)
@@ -209,6 +216,7 @@ class GeminiLiveSession:
                     "status": "started",
                     "note": "The result will be announced as soon as it is ready.",
                 })
+            self._ack_sent.set()
         elif name == "checkStatus":
             if self.tm.busy:
                 await self._respond(fc_id, name, {
@@ -235,7 +243,10 @@ class GeminiLiveSession:
 
     def deliver_result(self, summary):
         """Deliver a finished task's summary into the live conversation.
-        Called from worker threads. Returns True if delivered."""
+        Called from worker threads. Returns True if delivered into the live
+        conversation. Returns False if the session or socket is unavailable --
+        the caller MUST treat False as undelivered and fall back to
+        pending/push delivery."""
         if not (self.alive and self._loop):
             return False
         future = asyncio.run_coroutine_threadsafe(self._deliver(summary), self._loop)
@@ -245,8 +256,14 @@ class GeminiLiveSession:
             return False
 
     async def _deliver(self, summary):
+        ack = self._ack_sent
+        if ack is not None:
+            try:
+                await asyncio.wait_for(ack.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                pass
+        fc, self._current_fc = self._current_fc, None
         try:
-            fc, self._current_fc = self._current_fc, None
             if self.async_tools and fc and fc["id"] not in self._cancelled:
                 await self._respond(fc["id"], fc["name"], {"result": summary},
                                     scheduling="INTERRUPT")
@@ -261,4 +278,5 @@ class GeminiLiveSession:
             return True
         except Exception as e:
             print("[gemini] deliver failed: {}".format(e))
+            self._current_fc = fc
             return False
