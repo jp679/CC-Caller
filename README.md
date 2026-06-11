@@ -101,7 +101,8 @@ a project-local `.env` cannot set it.
 
 - **Give a task** — speak naturally; the agent sends it to Claude
 - **Keep talking** — the conversation stays live while Claude works
-- **Hang up anytime** — push notification + spoken result when you return
+- **Hang up anytime** — push notification when Claude finishes; on reconnect
+  the agent greets you and reads the result first, unprompted
 - **End** — say "end session" or "goodbye"
 
 Options: `--session-id NAME` (persistent Claude session), `--new-session`,
@@ -109,6 +110,12 @@ Options: `--session-id NAME` (persistent Claude session), `--new-session`,
 `--tunnel ngrok` (use ngrok; set `NGROK_DOMAIN` for a stable domain),
 `--model models/...` (Gemini Live model override), positional instruction
 to start Claude immediately: `cc-caller "refactor the auth module"`.
+
+Each Claude session keeps its own caller memory — task history, undelivered
+results, and short notes the agent writes itself about past calls (stored at
+`~/.config/cc-caller/sessions/`, distilled at hang-up). Resuming a session
+restores its memory, so the voice agent picks up where that conversation left
+off, across restarts.
 
 Calibrate the agent: drop a `prompt.md` into `~/.config/cc-caller/` with extra
 instructions for the voice agent (language, tone, habits) — it's loaded at
