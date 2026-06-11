@@ -48,7 +48,7 @@ cc-caller              # prints a URL + QR code — open it on your phone
 
 Scan the QR, tap Connect, and talk. Add to Home Screen for the full app feel.
 
-Session choice happens in the PWA: before connecting, pick one of the recent Claude sessions for the folder or start a new one. `--session-id NAME` / `--new-session` set the default from the command line.
+Session choice happens in the PWA: before connecting, pick one of the recent Claude sessions for the folder or start a new one. `--session-id NAME` / `--new-session` set the default from the command line. Resuming a session shows its recent transcript in the call view and primes the voice agent with it.
 
 ## How it works
 

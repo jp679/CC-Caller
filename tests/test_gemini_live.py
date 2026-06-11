@@ -321,3 +321,16 @@ async def test_connect_failure_raises_runtime_error():
     )
     with pytest.raises(RuntimeError):
         await session.run(no_messages())
+
+
+async def test_ready_frame_includes_session_identity():
+    tm = StubTM()
+    tm.session_id = "abc-12345678"
+    tm.session_name = "myproj"
+    async with FakeGemini() as fake:
+        h = Harness(fake, tm)
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        ready = [m for m in h.to_browser if m.get("type") == "ready"][0]
+        assert ready["session"] == {"id": "abc-12345678", "name": "myproj"}
+        await h.stop()

@@ -124,7 +124,9 @@ class GeminiLiveSession:
         self._loop = asyncio.get_event_loop()
         self._ws = await self._connect()
         self.alive = True
-        await self.send_to_browser({"type": "ready", "asyncTools": self.async_tools})
+        await self.send_to_browser({"type": "ready", "asyncTools": self.async_tools,
+                                    "session": {"id": getattr(self.tm, "session_id", None),
+                                                "name": getattr(self.tm, "session_name", None)}})
         if self.on_ready:
             self.on_ready()
         browser_task = asyncio.ensure_future(self._pump_browser(browser_messages))

@@ -43,3 +43,8 @@ button.connected { background: #7f1d1d; color: #fecaca; }
   flex: 1; background: #0a0a0a; border: 1px solid #333; border-radius: 6px;
   color: #e5e5e5; padding: 6px 8px; font-size: 13px;
 }
+#session-label {
+  font-size: 11px; color: #6b7280; margin-top: 2px; max-width: 55vw;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cap.past { opacity: 0.55; }

@@ -65,3 +65,45 @@ def test_recent_sessions_survives_vanishing_file(tmp_path, monkeypatch):
     monkeypatch.setattr(type(proj_dir), "iterdir", racy_iterdir)
     result = sessions.recent_sessions(limit=5)
     assert [s["session_id"] for s in result] == ["33333333-3333-3333-3333-333333333333"]
+
+
+def test_recent_messages_extracts_tail(tmp_path, monkeypatch):
+    proj_dir = tmp_path / "p"
+    proj_dir.mkdir()
+    monkeypatch.setattr(sessions, "project_transcript_dir", lambda cwd=None: proj_dir)
+    sid = "55555555-5555-5555-5555-555555555555"
+    lines = [
+        json.dumps({"type": "summary", "summary": "x"}),
+        json.dumps({"type": "user", "message": {"role": "user", "content": "first question"}}),
+        json.dumps({"type": "assistant", "message": {"role": "assistant",
+                    "content": [{"type": "text", "text": "first answer"}]}}),
+        "not json at all",
+        json.dumps({"type": "user", "message": {"role": "user", "content": "<system-tag>skip me"}}),
+        json.dumps({"type": "user", "message": {"role": "user", "content": "second question"}}),
+    ]
+    (proj_dir / "{}.jsonl".format(sid)).write_text("\n".join(lines) + "\n")
+    msgs = sessions.recent_messages(sid)
+    assert msgs == [
+        {"role": "user", "text": "first question"},
+        {"role": "assistant", "text": "first answer"},
+        {"role": "user", "text": "second question"},
+    ]
+
+
+def test_recent_messages_limit_and_truncate(tmp_path, monkeypatch):
+    proj_dir = tmp_path / "p"
+    proj_dir.mkdir()
+    monkeypatch.setattr(sessions, "project_transcript_dir", lambda cwd=None: proj_dir)
+    sid = "66666666-6666-6666-6666-666666666666"
+    lines = [json.dumps({"type": "user", "message": {"role": "user", "content": "m{} ".format(i) + "x" * 500}})
+             for i in range(20)]
+    (proj_dir / "{}.jsonl".format(sid)).write_text("\n".join(lines) + "\n")
+    msgs = sessions.recent_messages(sid, limit=5, max_chars=50)
+    assert len(msgs) == 5
+    assert msgs[-1]["text"].startswith("m19")
+    assert all(len(m["text"]) <= 50 for m in msgs)
+
+
+def test_recent_messages_missing_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(sessions, "project_transcript_dir", lambda cwd=None: tmp_path)
+    assert sessions.recent_messages("77777777-7777-7777-7777-777777777777") == []

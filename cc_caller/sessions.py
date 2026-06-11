@@ -1,4 +1,5 @@
 """Discover recent Claude Code sessions for the current project directory."""
+import collections
 import json
 import pathlib
 import re
@@ -75,3 +76,34 @@ def recent_sessions(limit=5, cwd=None):
             "age": _age(mtime),
         })
     return out
+
+
+def recent_messages(session_id, cwd=None, limit=12, max_chars=240):
+    """Last `limit` user/assistant text messages from a session transcript."""
+    f = project_transcript_dir(cwd) / "{}.jsonl".format(session_id)
+    out = collections.deque(maxlen=limit)
+    try:
+        with open(f) as fh:
+            for line in fh:
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                role = entry.get("type")
+                if role not in ("user", "assistant"):
+                    continue
+                content = entry.get("message", {}).get("content")
+                if isinstance(content, str):
+                    text = content
+                elif isinstance(content, list):
+                    text = " ".join(b.get("text", "") for b in content
+                                    if isinstance(b, dict) and b.get("type") == "text")
+                else:
+                    continue
+                text = text.strip()
+                if not text or text.startswith("<"):
+                    continue
+                out.append({"role": role, "text": text[:max_chars]})
+    except OSError:
+        return []
+    return list(out)

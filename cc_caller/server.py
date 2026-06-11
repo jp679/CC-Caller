@@ -27,7 +27,7 @@ class AppState:
         self.session_holder = {"session": None}
 
 
-def build_system_prompt(state):
+def build_system_prompt(state, resumed=None):
     """Base relay prompt + recent history + any pending (undelivered) result."""
     prompt = state.base_system_prompt
     if state.task_manager.history:
@@ -40,6 +40,16 @@ def build_system_prompt(state):
         prompt += ("\n\nPENDING RESULT -- the user has not heard this yet. Open the "
                    "conversation by telling them: {}\n".format(
                        state.task_manager.pending["summary"]))
+    if resumed:
+        block = ("\n\nRESUMED CLAUDE SESSION -- recent exchange between the user and Claude "
+                 "(context only; Claude already remembers all of it; answer follow-ups from "
+                 "this when you can):\n")
+        for m in resumed:
+            line = "{}: {}\n".format(m["role"], m["text"])
+            if len(block) + len(line) > 3000:
+                break
+            block += line
+        prompt += block
     return prompt
 
 
@@ -123,9 +133,17 @@ def create_app(state):
                 switch_note = ("Could not switch session — a task is still running. "
                                "Connected to the current session instead.")
 
+        resumed = sessions.recent_messages(state.task_manager.session_id)
+        for m in resumed:
+            try:
+                await websocket.send_json({"type": "transcript",
+                                           "role": m["role"], "text": m["text"]})
+            except Exception:
+                break
+
         session = GeminiLiveSession(
             api_key=state.api_key,
-            system_prompt=build_system_prompt(state),
+            system_prompt=build_system_prompt(state, resumed=resumed),
             task_manager=state.task_manager,
             send_to_browser=websocket.send_json,
             model=state.model,

@@ -146,11 +146,14 @@ function renderSessions(data) {
     box.appendChild(row);
     return row;
   };
-  addRow('Current session' + (data.current.name ? ' — ' + data.current.name : ''), '',
+  const currentLabel = 'Current session' + (data.current.name ? ' — ' + data.current.name : '');
+  addRow(currentLabel, '',
     () => { chosenSession = null; }, true);
   (data.sessions || []).forEach(s => {
     if (s.session_id === data.current.id) return;
-    addRow(s.label, s.age, () => { chosenSession = { kind: 'id', value: s.session_id }; }, false);
+    addRow(s.label, s.age, () => {
+      chosenSession = { kind: 'id', value: s.session_id, label: s.label };
+    }, false);
   });
   addRow('＋ New session', '', (row) => {
     if (row.querySelector('input')) return;
@@ -158,10 +161,12 @@ function renderSessions(data) {
     input.placeholder = 'name (optional)';
     input.onclick = (e) => e.stopPropagation();
     input.oninput = () => {
-      chosenSession = { kind: 'name', value: input.value.trim() || defaultSessionName() };
+      const name = input.value.trim() || defaultSessionName();
+      chosenSession = { kind: 'name', value: name, label: name };
     };
     row.appendChild(input);
-    chosenSession = { kind: 'name', value: defaultSessionName() };
+    const name = defaultSessionName();
+    chosenSession = { kind: 'name', value: name, label: name };
   }, false);
   box.classList.remove('hidden');
 }
@@ -176,7 +181,17 @@ function sessionParam() {
   return '&session=' + encodeURIComponent(chosenSession.kind + ':' + chosenSession.value);
 }
 
+function addPast(role, text) {
+  const box = $('captions');
+  const div = document.createElement('div');
+  div.className = 'cap past ' + (role === 'assistant' ? 'agent' : 'user');
+  div.textContent = text;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
 async function connect() {
+  $('captions').innerHTML = '';
   setupPush();
   setStatus('connecting…', 'idle');
   const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
@@ -184,6 +199,9 @@ async function connect() {
   ws.onmessage = async (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'ready') {
+      const s = msg.session || {};
+      $('session-label').textContent = (chosenSession && chosenSession.label) ||
+        s.name || (s.id ? s.id.slice(0, 8) : '');
       setStatus('live', 'live');
       $('sessions').classList.add('hidden');
       $('connect').textContent = 'Hang up';
@@ -192,6 +210,7 @@ async function connect() {
       try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
     } else if (msg.type === 'audio') playAudio(msg.data);
     else if (msg.type === 'caption') addCaption(msg.role, msg.text);
+    else if (msg.type === 'transcript') addPast(msg.role, msg.text);
     else if (msg.type === 'status') {
       if (msg.state === 'working') setWorking(true);
       else if (msg.state === 'done') setWorking(false);

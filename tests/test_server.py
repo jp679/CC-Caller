@@ -243,3 +243,41 @@ def test_ws_session_switch_refused_sends_error_frame(tmp_path, monkeypatch):
         assert "task is still running" in first["message"]
         assert ws.receive_json()["type"] == "ready"
         ws.send_json({"type": "end"})
+
+
+def test_build_system_prompt_includes_resumed_messages(tmp_path, monkeypatch):
+    state = make_state(tmp_path, monkeypatch)
+    resumed = [{"role": "user", "text": "fix the login bug"},
+               {"role": "assistant", "text": "done, tests pass"}]
+    prompt = build_system_prompt(state, resumed=resumed)
+    assert "RESUMED CLAUDE SESSION" in prompt
+    assert "fix the login bug" in prompt
+    assert "done, tests pass" in prompt
+    assert build_system_prompt(state) == build_system_prompt(state, resumed=[])
+
+
+def test_ws_sends_transcript_frames_before_ready(tmp_path, monkeypatch):
+    state = make_state(tmp_path, monkeypatch)
+    fake_msgs = [{"role": "user", "text": "old question"},
+                 {"role": "assistant", "text": "old answer"}]
+    import cc_caller.server as server_mod
+    monkeypatch.setattr(server_mod.sessions, "recent_messages",
+                        lambda sid, limit=12: fake_msgs)
+
+    class StubSession:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def run(self, browser_messages):
+            await self.kwargs["send_to_browser"]({"type": "ready", "asyncTools": True})
+            async for _ in browser_messages:
+                return
+
+    monkeypatch.setattr(server_mod, "GeminiLiveSession", StubSession)
+    client = TestClient(create_app(state))
+    with client.websocket_connect("/ws?token=sekrit") as ws:
+        frames = [ws.receive_json(), ws.receive_json(), ws.receive_json()]
+        assert frames[0] == {"type": "transcript", "role": "user", "text": "old question"}
+        assert frames[1] == {"type": "transcript", "role": "assistant", "text": "old answer"}
+        assert frames[2]["type"] == "ready"
+        ws.send_json({"type": "end"})
