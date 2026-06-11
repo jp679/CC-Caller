@@ -19,7 +19,7 @@ Hang up anytime; you get a push notification when Claude finishes.
 
 **One-liner:**
 
-Needs Python 3.9+ and [pipx](https://pipx.pypa.io) (or [uv](https://docs.astral.sh/uv/)).
+Needs Python 3.10+ and [pipx](https://pipx.pypa.io) (or [uv](https://docs.astral.sh/uv/)).
 
 ```bash
 pipx install git+https://github.com/jp679/CC-Caller

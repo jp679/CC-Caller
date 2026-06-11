@@ -1,4 +1,16 @@
 #!/bin/bash
 # CC-Caller dev wrapper. Installed users get the `cc-caller` console script instead.
 DIR="$(cd "$(dirname "$0")" && pwd)"
-PYTHONPATH="$DIR:$PYTHONPATH" python3 -m cc_caller.cli "$@"
+if [ -x "$DIR/.venv/bin/python" ]; then
+  exec "$DIR/.venv/bin/python" -m cc_caller.cli "$@"
+fi
+for PY in python3.13 python3.12 python3.11 python3.10; do
+  if command -v "$PY" >/dev/null 2>&1; then
+    exec env PYTHONPATH="$DIR:$PYTHONPATH" "$PY" -m cc_caller.cli "$@"
+  fi
+done
+if python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>/dev/null; then
+  exec env PYTHONPATH="$DIR:$PYTHONPATH" python3 -m cc_caller.cli "$@"
+fi
+echo "cc-caller needs Python 3.10+ (found: $(python3 --version 2>&1)). Install one: brew install python@3.12" >&2
+exit 1

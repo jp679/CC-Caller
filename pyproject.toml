@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "cc-caller"
 version = "0.1.0"
 description = "Talk to Claude Code from your phone. Free."
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0",
@@ -17,6 +17,7 @@ dependencies = [
     "cryptography>=42.0",
     "qrcode>=7.4",
     "pyngrok>=7.2.0",
+    "claude-agent-sdk",
 ]
 
 [project.scripts]

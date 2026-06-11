@@ -18,14 +18,16 @@ Gemini declares `askCodingAgent` as a NON_BLOCKING tool: an interim ack keeps th
 python3 -m pytest tests/ -q                       # full offline suite — no network or credentials
 python3 -m pytest tests/test_gemini_live.py -q    # one file
 python3 -m pytest "tests/test_tasks.py::test_submit_runs_task_and_reports_completion"  # one test
+# On this machine deps live in .venv — use .venv/bin/python -m pytest ... if python3 points to 3.9
 
 ./cc-caller                   # default mode: Gemini PWA (dev wrapper; installs get the console script)
 ./cc-caller setup             # onboarding wizard — Gemini key → ~/.config/cc-caller/.env
 ./cc-caller --sip --inbound   # legacy VAPI SIP transport (needs VAPI credentials)
 pip install -e ".[dev]"       # dev install; pyproject.toml is the single dependency source
+# Dev: python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 ```
 
-Python 3.9 compatible — no `match`, no `X | Y` unions. Live runs need the `claude` CLI and `cloudflared` on PATH.
+Python 3.10+ (floor set by claude-agent-sdk). Dev runs use ./.venv (gitignored); the wrapper prefers it.
 
 ## Architecture
 
