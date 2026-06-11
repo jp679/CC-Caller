@@ -10,11 +10,16 @@ from cc_caller.summarizer import summarize_output
 
 
 class TaskManager:
-    def __init__(self, session_name="caller", new_session=False, show_exchange=False):
+    def __init__(self, session_name="caller", new_session=False, show_exchange=False, session_id=None):
         import uuid as _uuid
         self.session_name = session_name
         self.show_exchange = show_exchange
-        self.session_id = str(_uuid.uuid4()) if new_session else name_to_uuid(session_name)
+        if session_id:
+            self.session_id = session_id
+        elif new_session:
+            self.session_id = str(_uuid.uuid4())
+        else:
+            self.session_id = name_to_uuid(session_name)
         self.first_run = True
         self.history = []          # [{"task", "summary"}]
         self.pending = None        # {"task", "summary", "detail", "meta"} until consumed

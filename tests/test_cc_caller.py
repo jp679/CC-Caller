@@ -60,3 +60,11 @@ def test_should_call_on_need_mode_no():
     with patch("cc_caller.claude_worker.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="NO", returncode=0)
         assert should_call(CallMode.ON_NEED, "All tests pass.", last_call_time=0, interval_minutes=0) is False
+
+
+def test_run_claude_omits_name_when_none():
+    with patch("cc_caller.claude_worker.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        run_claude("do it", "sid-1", session_name=None, is_first_run=False)
+    cmd = mock_run.call_args[0][0]
+    assert "--name" not in cmd

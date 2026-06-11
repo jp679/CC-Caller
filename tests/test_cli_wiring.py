@@ -1,6 +1,14 @@
+import contextlib
 from unittest.mock import MagicMock, patch
 
 from cc_caller.cli import make_on_complete
+
+
+@contextlib.contextmanager
+def mock_input(monkeypatch, answers):
+    it = iter(answers)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(it))
+    yield
 
 
 def _state(session):
@@ -165,3 +173,44 @@ def test_resolve_token_ignores_project_local_env(monkeypatch, tmp_path):
     config.load_config()
     from cc_caller.cli import resolve_token
     assert resolve_token() != "attacker-known-token"
+
+
+def test_pick_session_bypassed_by_flags(monkeypatch):
+    from cc_caller.cli import parse_args, pick_session
+    args = parse_args(["--session-id", "myproj"])
+    assert pick_session(args) == ("myproj", False, None)
+    args = parse_args(["--new-session"])
+    assert pick_session(args) == ("caller", True, None)
+
+
+def test_pick_session_bypassed_when_not_tty(monkeypatch):
+    from cc_caller.cli import parse_args, pick_session
+    monkeypatch.setattr("sys.stdin", type("S", (), {"isatty": lambda self: False})())
+    args = parse_args([])
+    assert pick_session(args) == ("caller", False, None)
+
+
+def test_pick_session_choices(monkeypatch):
+    from cc_caller import cli
+    fake = [{"session_id": "aaa", "label": "fix auth", "age": "5m ago"},
+            {"session_id": "bbb", "label": "dark mode", "age": "2h ago"}]
+    monkeypatch.setattr("sys.stdin", type("S", (), {"isatty": lambda self: True})())
+    monkeypatch.setattr(cli.sessions, "recent_sessions", lambda limit=5: fake)
+    args = cli.parse_args([])
+
+    with mock_input(monkeypatch, ["2"]):
+        assert cli.pick_session(args) == (None, False, "bbb")
+    with mock_input(monkeypatch, [""]):          # Enter = most recent
+        assert cli.pick_session(args) == (None, False, "aaa")
+    with mock_input(monkeypatch, ["n", "myfeature"]):
+        assert cli.pick_session(args) == ("myfeature", False, None)
+    with mock_input(monkeypatch, ["n", ""]):     # new with default name
+        name, new, sid = cli.pick_session(args)
+        assert sid is None and new is False and name
+
+
+def test_pick_session_no_sessions_falls_back(monkeypatch):
+    from cc_caller import cli
+    monkeypatch.setattr("sys.stdin", type("S", (), {"isatty": lambda self: True})())
+    monkeypatch.setattr(cli.sessions, "recent_sessions", lambda limit=5: [])
+    assert cli.pick_session(cli.parse_args([])) == ("caller", False, None)

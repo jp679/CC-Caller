@@ -48,6 +48,8 @@ cc-caller              # prints a URL + QR code — open it on your phone
 
 Scan the QR, tap Connect, and talk. Add to Home Screen for the full app feel.
 
+On launch, cc-caller lists the last 5 Claude sessions in the folder so you can resume one by number or start a new one — `--session-id NAME` / `--new-session` skip the menu.
+
 ## How it works
 
 ```

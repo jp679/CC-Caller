@@ -82,8 +82,9 @@ def run_claude(instruction: str, session_id: str, session_name: str = "caller", 
         "claude", "-p", "--output-format", "text",
         "--append-system-prompt", WORKER_SYSTEM_PROMPT,
         "--disallowedTools", "Bash(cc-caller*) Bash(python*cc_caller*) Bash(python*vapi*) Bash(curl*vapi*) Bash(curl*twilio*)",
-        "--name", session_name,
     ]
+    if session_name:
+        base_cmd += ["--name", session_name]
     def _is_error(r):
         combined = (r.stdout + r.stderr).lower()
         return r.returncode != 0 or "api error: 400" in combined or "concurrency" in combined

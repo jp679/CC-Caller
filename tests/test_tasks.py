@@ -100,3 +100,10 @@ def test_no_prints_without_show_exchange(capsys):
         tm.submit("quiet task")
         assert done.wait(timeout=5)
     assert "[task]" not in capsys.readouterr().out
+
+
+def test_explicit_session_id_overrides_name():
+    p1, p2, p3, p4 = _patches()
+    with p1, p2, p3, p4:
+        tm = TaskManager(session_name="x", session_id="abc-123")
+        assert tm.session_id == "abc-123"
