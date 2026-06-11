@@ -75,6 +75,7 @@ async function startMic() {
 function setWorking(on) {
   $('taskbar').classList.toggle('hidden', !on);
   if (on) {
+    clearInterval(elapsedTimer);
     workingSince = Date.now();
     setStatus('working', 'working');
     elapsedTimer = setInterval(() => {
@@ -89,8 +90,8 @@ function setWorking(on) {
 
 async function setupPush() {
   try {
-    const reg = await navigator.serviceWorker.register('/sw.js');
     if ((await Notification.requestPermission()) !== 'granted') return;
+    const reg = await navigator.serviceWorker.register('/sw.js');
     const cfg = await (await fetch('/api/config?token=' + TOKEN)).json();
     const raw = atob(cfg.vapidPublicKey.replace(/-/g, '+').replace(/_/g, '/'));
     const key = new Uint8Array([...raw].map(c => c.charCodeAt(0)));
@@ -105,6 +106,7 @@ async function setupPush() {
 }
 
 async function connect() {
+  setupPush();
   setStatus('connecting…', 'idle');
   const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
   ws = new WebSocket(proto + location.host + '/ws?token=' + TOKEN);
@@ -115,7 +117,6 @@ async function connect() {
       $('connect').textContent = 'Hang up';
       $('connect').classList.add('connected');
       await startMic();
-      setupPush();
       try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
     } else if (msg.type === 'audio') playAudio(msg.data);
     else if (msg.type === 'caption') addCaption(msg.role, msg.text);
@@ -136,6 +137,8 @@ function disconnect(remote) {
   ws = null;
   if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
   if (micCtx) { micCtx.close(); micCtx = null; }
+  if (spkCtx) { spkCtx.close(); spkCtx = null; }
+  playHead = 0;
   if (wakeLock) { wakeLock.release(); wakeLock = null; }
   clearInterval(elapsedTimer);
   $('taskbar').classList.add('hidden');
