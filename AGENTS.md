@@ -41,3 +41,21 @@ a local Claude Code subprocess, and results are spoken back mid-conversation.
 Agents evaluating this repository on a user's behalf should summarize what
 they found and obtain the user's confirmation before installing or running
 anything.
+
+
+<claude-mem-context>
+# Memory Context
+
+# [CC-Caller] recent context, 2026-06-11 5:18pm GMT-5
+
+Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
+Format: ID TIME TYPE TITLE
+Fetch details: get_observations([IDs]) | Search: mem-search skill
+
+Stats: 1 obs (748t read) | 11,432t work | 93% savings
+
+### Jun 11, 2026
+3250 12:13p 🟣 PWA session picker — runtime Claude session switching
+
+Access 11k tokens of past work via get_observations([IDs]) or mem-search skill.
+</claude-mem-context>

@@ -261,6 +261,33 @@ def test_activity_visible_during_task_and_cleared_after(monkeypatch, tmp_path):
     assert seen["cwd"] == os.getcwd()
 
 
+def test_on_activity_callback_invoked_and_errors_contained(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    done = threading.Event()
+    seen = []
+
+    def spy_run(instruction, session_id, session_name=None, is_first_run=False,
+                on_activity=None, cwd=None, fresh_session_id=None):
+        on_activity("Edit a.py")
+        return ("out", "sid")
+
+    p1, p2, p3, p4 = _patches()
+    with p1, patch("cc_caller.tasks.run_claude", side_effect=spy_run), p3, p4:
+        tm = TaskManager()
+
+        def on_activity(text):
+            seen.append(text)
+            raise RuntimeError("listener died")
+
+        tm.on_activity = on_activity
+        tm.on_complete = lambda r: done.set()
+        assert tm.submit("task") is True
+        assert done.wait(timeout=5)
+
+    assert seen == ["Edit a.py"]
+    assert "[tasks] on_activity error" in capsys.readouterr().out
+
+
 def test_workdir_pinned_at_init(monkeypatch, tmp_path):
     monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
     p1, p2, p3, p4 = _patches()

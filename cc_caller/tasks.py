@@ -24,6 +24,7 @@ class TaskManager:
             self.session_id = name_to_uuid(session_name)
         self.first_run = True
         self.on_complete = None    # Callable[[dict], None], set by wiring
+        self.on_activity = None    # Callable[[str], None], set by wiring
         self._lock = threading.Lock()
         self._state_lock = threading.Lock()  # guards pending + history (NOT _lock: held for task duration)
         self._started_at = None
@@ -105,6 +106,11 @@ class TaskManager:
                 print("[task] ~ {}".format(text))
             except Exception:
                 pass
+        if self.on_activity:
+            try:
+                self.on_activity(text)
+            except Exception as e:
+                print("[tasks] on_activity error: {}".format(e))
 
     def _run(self, task, meta):
         t0 = time.time()

@@ -417,3 +417,27 @@ async def test_check_status_omits_activity_when_absent():
         resp = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
         assert "activity" not in resp["response"]
         await h.stop()
+
+
+async def test_notify_activity_sends_status_from_foreign_thread():
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await asyncio.get_event_loop().run_in_executor(
+            None, h.session.notify_activity, "Bash pytest -q")
+        await wait_until(lambda: any(
+            m.get("type") == "status" and m.get("activity") == "Bash pytest -q"
+            for m in h.to_browser))
+        msg = [m for m in h.to_browser
+               if m.get("type") == "status" and m.get("activity") == "Bash pytest -q"][0]
+        assert msg == {"type": "status", "state": "working", "activity": "Bash pytest -q"}
+        await h.stop()
+
+
+async def test_notify_activity_noop_when_dead():
+    session = GeminiLiveSession(
+        api_key="k", system_prompt="P", task_manager=StubTM(),
+        send_to_browser=lambda m: None,
+    )
+    session.notify_activity("anything")

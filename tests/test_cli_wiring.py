@@ -181,3 +181,23 @@ def test_resolve_token_ignores_project_local_env(monkeypatch, tmp_path):
     assert resolve_token() != "attacker-known-token"
 
 
+def test_make_on_activity_routes_to_live_session_only():
+    from cc_caller.cli import make_on_activity
+
+    state = MagicMock()
+    state.session_holder = {"session": None}
+    cb = make_on_activity(state)
+    cb("one")
+
+    dead = MagicMock()
+    dead.alive = False
+    state.session_holder = {"session": dead}
+    cb("two")
+    dead.notify_activity.assert_not_called()
+
+    live = MagicMock()
+    live.alive = True
+    state.session_holder = {"session": live}
+    cb("three")
+    live.notify_activity.assert_called_once_with("three")
+

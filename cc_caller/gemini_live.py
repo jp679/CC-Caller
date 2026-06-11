@@ -287,6 +287,25 @@ class GeminiLiveSession:
         except Exception:
             return False
 
+    def notify_activity(self, text):
+        if not (self.alive and self._loop):
+            return
+
+        async def _send():
+            try:
+                await self.send_to_browser({
+                    "type": "status",
+                    "state": "working",
+                    "activity": text,
+                })
+            except Exception as e:
+                print("[gemini] activity notify failed: {}".format(e))
+
+        try:
+            asyncio.run_coroutine_threadsafe(_send(), self._loop)
+        except Exception:
+            pass
+
     async def _deliver(self, summary):
         ack = self._ack_sent
         if ack is not None:

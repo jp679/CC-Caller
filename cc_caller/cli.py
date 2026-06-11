@@ -149,6 +149,14 @@ def make_on_complete(state, task_manager, public_url, vapid_priv):
     return on_complete
 
 
+def make_on_activity(state):
+    def on_activity(text):
+        session = state.session_holder.get("session")
+        if session is not None and getattr(session, "alive", False):
+            session.notify_activity(text)
+    return on_activity
+
+
 def print_qr(url):
     import qrcode
     qr = qrcode.QRCode(border=1)
@@ -218,6 +226,7 @@ def run_gemini_pwa(args):
             return 1
 
     task_manager.on_complete = make_on_complete(state, task_manager, public_url, vapid_priv)
+    task_manager.on_activity = make_on_activity(state)
 
     url = "{}/?token={}".format(public_url, token)
     print("\nCC-Caller is live. Open on your phone:\n\n  {}\n".format(url))
