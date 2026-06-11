@@ -27,10 +27,15 @@ def run_setup():
     if not key:
         print("No key entered.")
         return 1
-    resp = requests.get(
-        "https://generativelanguage.googleapis.com/v1beta/models?key={}".format(key),
-        timeout=15,
-    )
+    try:
+        resp = requests.get(
+            "https://generativelanguage.googleapis.com/v1beta/models?key={}".format(key),
+            timeout=15,
+        )
+    except requests.RequestException as e:
+        print("Could not reach Google to validate the key ({}). "
+              "Check your connection and try again.".format(type(e).__name__))
+        return 1
     if resp.status_code != 200:
         print("Key validation failed (HTTP {}). Not saved.".format(resp.status_code))
         return 1

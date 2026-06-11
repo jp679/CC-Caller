@@ -44,6 +44,18 @@ def test_setup_validates_key_and_saves(monkeypatch, tmp_path):
     assert 'GEMINI_API_KEY="test-key-123"' in (tmp_path / ".env").read_text()
 
 
+def test_setup_handles_network_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    import requests as requests_lib
+    with patch("cc_caller.cli.requests.get",
+               side_effect=requests_lib.exceptions.ConnectionError("boom")):
+        with patch("builtins.input", return_value="some-key"):
+            with patch("sys.argv", ["cc-caller", "setup"]):
+                rc = cli.main()
+    assert rc == 1
+    assert not (tmp_path / ".env").exists()
+
+
 def test_setup_rejects_bad_key(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
     bad = MagicMock(status_code=400)
