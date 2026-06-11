@@ -101,7 +101,10 @@ class TaskManager:
     def _set_activity(self, text):
         self.current_activity = text
         if self.show_exchange:
-            print("[task] ~ {}".format(text))
+            try:
+                print("[task] ~ {}".format(text))
+            except Exception:
+                pass
 
     def _run(self, task, meta):
         t0 = time.time()
