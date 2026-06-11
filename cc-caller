@@ -1,4 +1,4 @@
 #!/bin/bash
 # CC-Caller dev wrapper. Installed users get the `cc-caller` console script instead.
 DIR="$(cd "$(dirname "$0")" && pwd)"
-PYTHONPATH="$DIR:$PYTHONPATH" python3 -m cc_caller.legacy_cli "$@"
+PYTHONPATH="$DIR:$PYTHONPATH" python3 -m cc_caller.cli "$@"
