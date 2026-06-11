@@ -14,7 +14,7 @@ STATIC_DIR = pathlib.Path(__file__).resolve().parent / "static"
 
 class AppState:
     def __init__(self, token, task_manager, api_key, model, vapid_public_key,
-                 base_system_prompt, subscriptions):
+                 base_system_prompt, subscriptions, show_exchange=False):
         self.token = token
         self.task_manager = task_manager
         self.api_key = api_key
@@ -22,6 +22,7 @@ class AppState:
         self.vapid_public_key = vapid_public_key
         self.base_system_prompt = base_system_prompt
         self.subscriptions = subscriptions
+        self.show_exchange = show_exchange
         self.session_holder = {"session": None}
 
 
@@ -99,6 +100,7 @@ def create_app(state):
             send_to_browser=websocket.send_json,
             model=state.model,
             on_ready=state.task_manager.take_pending,
+            show_exchange=state.show_exchange,
         )
         state.session_holder["session"] = session
 

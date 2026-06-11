@@ -58,7 +58,7 @@ class GeminiLiveSession:
     """
 
     def __init__(self, api_key, system_prompt, task_manager, send_to_browser,
-                 model=None, ws_url=None, on_ready=None):
+                 model=None, ws_url=None, on_ready=None, show_exchange=False):
         self.api_key = api_key
         self.system_prompt = system_prompt
         self.tm = task_manager
@@ -66,6 +66,7 @@ class GeminiLiveSession:
         self.model = model or os.getenv("GEMINI_LIVE_MODEL", DEFAULT_MODEL)
         self.ws_url = ws_url or GEMINI_WS_URL
         self.on_ready = on_ready
+        self.show_exchange = show_exchange
         self.async_tools = True
         self.alive = False
         self.ended = False
@@ -209,6 +210,8 @@ class GeminiLiveSession:
                 })
                 return
             await self.send_to_browser({"type": "status", "state": "working", "task": task})
+            if self.show_exchange:
+                await self.send_to_browser({"type": "exchange", "role": "task", "text": task})
             if self.async_tools:
                 await self._respond(fc_id, name, {"status": "started"}, will_continue=True)
             else:
@@ -274,6 +277,8 @@ class GeminiLiveSession:
                         "Tell the user this result now: " + summary}]}],
                     "turnComplete": True,
                 }}))
+            if self.show_exchange:
+                await self.send_to_browser({"type": "exchange", "role": "result", "text": summary})
             await self.send_to_browser({"type": "status", "state": "done"})
             return True
         except Exception as e:

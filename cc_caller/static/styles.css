@@ -23,3 +23,10 @@ button {
   font-size: 17px; font-weight: 600; background: #22c55e; color: #052e16;
 }
 button.connected { background: #7f1d1d; color: #fecaca; }
+.xchg {
+  max-width: 100%; padding: 8px 12px; border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12.5px;
+  line-height: 1.4; background: #111827; color: #94a3b8;
+  border-left: 3px solid #334155; white-space: pre-wrap;
+}
+.xchg.result { border-left-color: #22c55e; }

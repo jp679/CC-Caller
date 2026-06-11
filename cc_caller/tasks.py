@@ -10,9 +10,10 @@ from cc_caller.summarizer import summarize_output
 
 
 class TaskManager:
-    def __init__(self, session_name="caller", new_session=False):
+    def __init__(self, session_name="caller", new_session=False, show_exchange=False):
         import uuid as _uuid
         self.session_name = session_name
+        self.show_exchange = show_exchange
         self.session_id = str(_uuid.uuid4()) if new_session else name_to_uuid(session_name)
         self.first_run = True
         self.history = []          # [{"task", "summary"}]
@@ -50,14 +51,19 @@ class TaskManager:
             return result
 
     def _run(self, task, meta):
+        t0 = time.time()
         try:
             cleaned = clean_transcript(task)
+            if self.show_exchange:
+                print("[task] -> {}".format(cleaned))
             output, self.session_id = run_claude(
                 cleaned, self.session_id,
                 session_name=self.session_name, is_first_run=self.first_run,
             )
             self.first_run = False
             summary = summarize_output(output)["summary"]
+            if self.show_exchange:
+                print("[task] done ({}s): {}".format(int(time.time() - t0), summary))
             log_interaction(cleaned, output)
             result = {"task": task, "summary": summary, "detail": output, "meta": meta}
             with self._state_lock:
@@ -65,6 +71,8 @@ class TaskManager:
                 del self.history[:-50]   # bound growth; consumers read history[-5:]
                 self.pending = result
         except Exception as e:
+            if self.show_exchange:
+                print("[task] FAILED: {}".format(e))
             result = {"task": task, "summary": "The task failed: {}".format(e),
                       "detail": str(e), "meta": meta}
             with self._state_lock:

@@ -107,3 +107,14 @@ def test_build_base_prompt_appends_calibration(monkeypatch, tmp_path):
     assert prompt.startswith(RELAY_SYSTEM_PROMPT)
     assert "USER CALIBRATION" in prompt
     assert "Address the user as JP. Be terse." in prompt
+
+
+def test_show_exchange_flag_parsing(monkeypatch):
+    from cc_caller.cli import show_exchange_enabled
+    monkeypatch.delenv("CC_SHOW_EXCHANGE", raising=False)
+    assert show_exchange_enabled() is True
+    for off in ("0", "false", "no", "off", "False"):
+        monkeypatch.setenv("CC_SHOW_EXCHANGE", off)
+        assert show_exchange_enabled() is False
+    monkeypatch.setenv("CC_SHOW_EXCHANGE", "1")
+    assert show_exchange_enabled() is True

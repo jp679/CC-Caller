@@ -76,3 +76,27 @@ def test_take_pending_when_empty_returns_none():
         tm = TaskManager()
         assert tm.take_pending() is None
         assert tm.pending is None
+
+
+def test_show_exchange_prints_task_and_result(capsys):
+    done = threading.Event()
+    p1, p2, p3, p4 = _patches()
+    with p1, p2, p3, p4:
+        tm = TaskManager(show_exchange=True)
+        tm.on_complete = lambda r: done.set()
+        assert tm.submit("fix the bug") is True
+        assert done.wait(timeout=5)
+    out = capsys.readouterr().out
+    assert "[task] -> fix the bug" in out
+    assert "did the thing" in out
+
+
+def test_no_prints_without_show_exchange(capsys):
+    done = threading.Event()
+    p1, p2, p3, p4 = _patches()
+    with p1, p2, p3, p4:
+        tm = TaskManager()
+        tm.on_complete = lambda r: done.set()
+        tm.submit("quiet task")
+        assert done.wait(timeout=5)
+    assert "[task]" not in capsys.readouterr().out

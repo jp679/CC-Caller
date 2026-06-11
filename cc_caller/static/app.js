@@ -28,6 +28,15 @@ function addCaption(role, text) {
   box.scrollTop = box.scrollHeight;
 }
 
+function addExchange(role, text) {
+  const box = $('captions');
+  const div = document.createElement('div');
+  div.className = 'xchg ' + role;
+  div.textContent = (role === 'task' ? '→ Claude: ' : '✓ Claude: ') + text;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
 function b64ToF32(b64) {
   const bin = atob(b64);
   const i16 = new Int16Array(new Uint8Array([...bin].map(c => c.charCodeAt(0))).buffer);
@@ -124,7 +133,8 @@ async function connect() {
       if (msg.state === 'working') setWorking(true);
       else if (msg.state === 'done') setWorking(false);
       else if (msg.state === 'ended') disconnect();
-    } else if (msg.type === 'error') addCaption('agent', '⚠ ' + msg.message);
+    } else if (msg.type === 'exchange') addExchange(msg.role, msg.text);
+    else if (msg.type === 'error') addCaption('agent', '⚠ ' + msg.message);
   };
   ws.onclose = () => disconnect(true);
 }

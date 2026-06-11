@@ -22,6 +22,11 @@ from cc_caller.server import AppState, create_app
 from cc_caller.tasks import TaskManager
 from cc_caller.tunnel import start_tunnel
 
+def show_exchange_enabled():
+    """CC_SHOW_EXCHANGE config flag: show the caller<->Claude exchange. On unless disabled."""
+    return os.getenv("CC_SHOW_EXCHANGE", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
 LEGACY_TRIGGERS = {
     "--sip", "--pwa", "--vapi-pwa", "--phone", "--inbound",
     "--mode", "--interval-minutes",
@@ -126,6 +131,7 @@ def print_qr(url):
 
 def run_gemini_pwa(args):
     config.load_config()
+    show_exchange = show_exchange_enabled()
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
         print("No GEMINI_API_KEY found. Run `cc-caller setup` first "
@@ -155,12 +161,14 @@ def run_gemini_pwa(args):
 
     vapid_priv, vapid_pub = push.ensure_vapid_keys()
     token = secrets.token_urlsafe(32)
-    task_manager = TaskManager(session_name=args.session, new_session=args.new_session)
+    task_manager = TaskManager(session_name=args.session, new_session=args.new_session,
+                               show_exchange=show_exchange)
     state = AppState(
         token=token, task_manager=task_manager, api_key=api_key,
         model=args.model, vapid_public_key=vapid_pub,
         base_system_prompt=build_base_prompt(),
         subscriptions=push.load_subscriptions(),
+        show_exchange=show_exchange,
     )
     app = create_app(state)
 

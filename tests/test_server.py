@@ -106,6 +106,29 @@ def test_ws_session_failure_sends_error_frame(tmp_path, monkeypatch):
     assert "Gemini Live setup failed" in msg["message"]
 
 
+def test_ws_passes_show_exchange_to_session(tmp_path, monkeypatch):
+    state = make_state(tmp_path, monkeypatch)
+    state.show_exchange = True
+    captured = {}
+
+    class StubSession:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def run(self, browser_messages):
+            return
+
+    import cc_caller.server as server_mod
+    monkeypatch.setattr(server_mod, "GeminiLiveSession", StubSession)
+    client = TestClient(create_app(state))
+    try:
+        with client.websocket_connect("/ws?token=sekrit"):
+            pass
+    except WebSocketDisconnect:
+        pass
+    assert captured.get("show_exchange") is True
+
+
 def test_system_prompt_includes_history_and_pending(tmp_path, monkeypatch):
     state = make_state(tmp_path, monkeypatch)
     state.task_manager.history = [{"task": "fix auth", "summary": "auth fixed"}]

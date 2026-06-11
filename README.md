@@ -82,6 +82,10 @@ Calibrate the agent: drop a `prompt.md` into `~/.config/cc-caller/` with extra
 instructions for the voice agent (language, tone, habits) — it's loaded at
 startup and appended to the built-in relay prompt on every session.
 
+By default the console and the call transcript also show the raw exchange —
+the task sent to Claude and the summary it returned. Set `CC_SHOW_EXCHANGE=0`
+to hide it.
+
 ## Advanced transports (VAPI)
 
 The original VAPI-based transports still work and need VAPI credentials in

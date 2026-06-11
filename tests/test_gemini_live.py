@@ -274,6 +274,36 @@ async def test_result_ready_during_pre_ack_await_still_ordered():
         await h.stop()
 
 
+async def test_show_exchange_sends_browser_messages():
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.session.show_exchange = True
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "f1", "name": "askCodingAgent", "args": {"task": "fix it"}}]}})
+        await wait_until(lambda: any(m.get("type") == "exchange" for m in h.to_browser))
+        assert {"type": "exchange", "role": "task", "text": "fix it"} in h.to_browser
+        ok = await asyncio.get_event_loop().run_in_executor(
+            None, h.session.deliver_result, "all good")
+        assert ok is True
+        await wait_until(lambda: {"type": "exchange", "role": "result", "text": "all good"}
+                         in h.to_browser)
+        await h.stop()
+
+
+async def test_no_exchange_messages_by_default():
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "f1", "name": "askCodingAgent", "args": {"task": "x"}}]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        assert not any(m.get("type") == "exchange" for m in h.to_browser)
+        await h.stop()
+
+
 async def test_connect_failure_raises_runtime_error():
     import socket
     s = socket.socket()
