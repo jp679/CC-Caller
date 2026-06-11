@@ -21,8 +21,11 @@
   <main id="captions"></main>
   <footer>
     <div id="sessions" class="hidden"></div>
-    <div id="taskbar" class="hidden">Claude working — <span id="elapsed">0s</span></div>
-    <button id="connect">Connect</button>
+    <div id="taskbar" class="hidden">Claude working — <span id="elapsed">0s</span><span id="activity"></span></div>
+    <div class="row">
+      <button id="mute" class="hidden secondary">Mute</button>
+      <button id="connect">Connect</button>
+    </div>
   </footer>
   <script src="/static/app.js"></script>
 </body>

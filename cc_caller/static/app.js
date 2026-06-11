@@ -8,6 +8,8 @@ let ws = null, micCtx = null, micStream = null, spkCtx = null;
 let playHead = 0, wakeLock = null, elapsedTimer = null, workingSince = null;
 let chosenSession = null;
 let autoConnected = qs.get('callback') === '1';
+let speakTimer = null;
+let muted = false;
 
 function setStatus(text, cls) {
   const el = $('status');
@@ -65,6 +67,7 @@ function playAudio(b64) {
   const t = Math.max(spkCtx.currentTime, playHead);
   src.start(t);
   playHead = t + buf.duration;
+  markSpeaking();
 }
 
 async function startMic() {
@@ -76,6 +79,7 @@ async function startMic() {
   const src = micCtx.createMediaStreamSource(micStream);
   const node = new AudioWorkletNode(micCtx, 'pcm-capture');
   node.port.onmessage = (e) => {
+    if (muted) return;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'audio', data: bufToB64(e.data) }));
     }
@@ -95,8 +99,23 @@ function setWorking(on) {
     }, 1000);
   } else {
     clearInterval(elapsedTimer);
+    workingSince = null;
+    $('activity').textContent = '';
     setStatus('live', 'live');
   }
+}
+
+function markSpeaking() {
+  const el = $('status');
+  if (el.className.indexOf('live') === -1 && el.className.indexOf('speaking') === -1) return;
+  setStatus('speaking', 'speaking');
+  if (speakTimer) clearTimeout(speakTimer);
+  const remaining = spkCtx ? Math.max(0, (playHead - spkCtx.currentTime) * 1000) : 0;
+  speakTimer = setTimeout(() => {
+    const cur = $('status');
+    if (cur.className.indexOf('speaking') !== -1) setStatus(workingSince ? 'working' : 'live',
+                                                            workingSince ? 'working' : 'live');
+  }, remaining + 150);
 }
 
 async function setupPush() {
@@ -207,14 +226,17 @@ async function connect() {
       $('sessions').classList.add('hidden');
       $('connect').textContent = 'Hang up';
       $('connect').classList.add('connected');
+      $('mute').classList.remove('hidden');
       await startMic();
       try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
     } else if (msg.type === 'audio') playAudio(msg.data);
     else if (msg.type === 'caption') addCaption(msg.role, msg.text);
     else if (msg.type === 'transcript') addPast(msg.role, msg.text);
     else if (msg.type === 'status') {
-      if (msg.state === 'working') setWorking(true);
-      else if (msg.state === 'done') setWorking(false);
+      if (msg.state === 'working') {
+        if (!workingSince) setWorking(true);
+        if (msg.activity) $('activity').textContent = ' — ' + msg.activity;
+      } else if (msg.state === 'done') setWorking(false);
       else if (msg.state === 'ended') disconnect();
     } else if (msg.type === 'exchange') addExchange(msg.role, msg.text);
     else if (msg.type === 'error') addCaption('agent', '⚠ ' + msg.message);
@@ -235,13 +257,25 @@ function disconnect(remote) {
   playHead = 0;
   if (wakeLock) { wakeLock.release(); wakeLock = null; }
   clearInterval(elapsedTimer);
+  clearTimeout(speakTimer);
+  workingSince = null;
   $('taskbar').classList.add('hidden');
+  $('activity').textContent = '';
   $('connect').textContent = 'Connect';
   $('connect').classList.remove('connected');
+  muted = false;
+  $('mute').textContent = 'Mute';
+  $('mute').classList.remove('muted');
+  $('mute').classList.add('hidden');
   setStatus('disconnected', 'idle');
   loadSessions();
 }
 
 $('connect').onclick = () => (ws ? disconnect() : connect());
+$('mute').onclick = () => {
+  muted = !muted;
+  $('mute').textContent = muted ? 'Unmute' : 'Mute';
+  $('mute').classList.toggle('muted', muted);
+};
 if (qs.get('callback') === '1') connect();
 loadSessions();
