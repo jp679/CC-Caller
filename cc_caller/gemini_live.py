@@ -249,9 +249,11 @@ class GeminiLiveSession:
             self._ack_sent.set()
         elif name == "checkStatus":
             if self.tm.busy:
-                await self._respond(fc_id, name, {
-                    "working": True, "elapsedSeconds": int(self.tm.elapsed or 0),
-                })
+                response = {"working": True, "elapsedSeconds": int(self.tm.elapsed or 0)}
+                activity = getattr(self.tm, "current_activity", None)
+                if activity:
+                    response["activity"] = activity
+                await self._respond(fc_id, name, response)
             else:
                 await self._respond(fc_id, name, {"working": False})
         elif name == "endSession":

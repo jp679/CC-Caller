@@ -385,3 +385,35 @@ async def test_no_session_end_callback_for_trivial_log():
         await fake.send({"serverContent": {"inputTranscription": {"text": "hi"}}})
         await h.stop()
     assert "log" not in ended
+
+
+async def test_check_status_includes_activity_when_present():
+    tm = StubTM()
+    tm.busy, tm.elapsed = True, 10.0
+    tm.current_activity = "Edit cc_caller/server.py"
+    async with FakeGemini() as fake:
+        h = Harness(fake, tm)
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "s1", "name": "checkStatus", "args": {}}]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        resp = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        assert resp["response"]["activity"] == "Edit cc_caller/server.py"
+        assert resp["response"]["working"] is True
+        await h.stop()
+
+
+async def test_check_status_omits_activity_when_absent():
+    tm = StubTM()
+    tm.busy, tm.elapsed = True, 10.0
+    async with FakeGemini() as fake:
+        h = Harness(fake, tm)
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "s1", "name": "checkStatus", "args": {}}]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        resp = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        assert "activity" not in resp["response"]
+        await h.stop()
