@@ -79,8 +79,8 @@ Options: `--session-id NAME` (persistent Claude session), `--new-session`,
 to start Claude immediately: `cc-caller "refactor the auth module"`.
 
 Calibrate the agent: drop a `prompt.md` into `~/.config/cc-caller/` with extra
-instructions for the voice agent (language, tone, habits) — it's appended to
-the built-in relay prompt on every session.
+instructions for the voice agent (language, tone, habits) — it's loaded at
+startup and appended to the built-in relay prompt on every session.
 
 ## Advanced transports (VAPI)
 
