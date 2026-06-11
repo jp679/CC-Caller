@@ -3,6 +3,12 @@
 Default mode: Gemini Live PWA. Legacy VAPI transports stay reachable via
 their original flags and delegate to legacy_cli unchanged.
 """
+import warnings
+
+# macOS system Python links LibreSSL; urllib3 v2 warns about it on import.
+# Harmless for us — silence it before anything imports requests/urllib3.
+warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL 1.1.1+")
+
 import argparse
 import os
 import secrets
