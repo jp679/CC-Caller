@@ -24,6 +24,13 @@ def load_config() -> None:
     load_dotenv(pathlib.Path.cwd() / ".env", override=True)
 
 
+def config_dir_value(key):
+    """Read a single value from the config-dir .env ONLY (never cwd/repo .env).
+    Use for auth material that must not be overridable by a project-local file."""
+    from dotenv import dotenv_values
+    return (dotenv_values(config_dir() / ".env").get(key) or "").strip()
+
+
 def prompt_extra() -> str:
     """User calibration text appended to the relay prompt (prompt.md in the config dir)."""
     f = config_dir() / "prompt.md"

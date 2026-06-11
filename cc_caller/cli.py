@@ -34,11 +34,11 @@ def show_exchange_enabled():
 
 
 def resolve_token():
-    """Per-run random token by default. CC_TOKEN fixes it; CC_PERSIST_TOKEN=1
-    generates one and stores it in the config dir (long-lived bearer -- pair
-    it with a stable tunnel domain, where it keeps the installed PWA working
-    across restarts)."""
-    explicit = os.getenv("CC_TOKEN", "").strip()
+    """Per-run random token by default. CC_TOKEN in the CONFIG-DIR .env fixes it
+    (project-local .env files are deliberately ignored for auth material);
+    CC_PERSIST_TOKEN=1 generates one and stores it there. Long-lived bearer --
+    pair it with a stable tunnel domain."""
+    explicit = config.config_dir_value("CC_TOKEN")
     if explicit:
         return explicit
     if os.getenv("CC_PERSIST_TOKEN", "0").strip().lower() not in ("0", "false", "no", "off", ""):

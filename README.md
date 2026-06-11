@@ -92,6 +92,8 @@ run it, and point cc-caller at it: `cc-caller --tunnel-url https://cc.yourdomain
 `CC_PERSIST_TOKEN=1` stores the access token across runs so the
 Add-to-Home-Screen app keeps working after restarts. Only use it with a
 stable domain you trust — it turns the per-run token into a long-lived one.
+For safety, `CC_TOKEN` is only ever read from `~/.config/cc-caller/.env` —
+a project-local `.env` cannot set it.
 
 ## During a call
 

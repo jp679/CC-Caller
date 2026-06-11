@@ -122,7 +122,8 @@ def test_show_exchange_flag_parsing(monkeypatch):
 
 def test_resolve_token_random_by_default(monkeypatch, tmp_path):
     monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
-    monkeypatch.delenv("CC_TOKEN", raising=False)
+    # the environment variable is ignored entirely — only the config-dir .env counts
+    monkeypatch.setenv("CC_TOKEN", "env-should-be-ignored")
     monkeypatch.delenv("CC_PERSIST_TOKEN", raising=False)
     from cc_caller.cli import resolve_token
     t1, t2 = resolve_token(), resolve_token()
@@ -133,7 +134,9 @@ def test_resolve_token_random_by_default(monkeypatch, tmp_path):
 
 def test_resolve_token_honors_explicit_cc_token(monkeypatch, tmp_path):
     monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("CC_TOKEN", "my-fixed-token")
+    monkeypatch.delenv("CC_TOKEN", raising=False)
+    from cc_caller import config
+    config.save_config_values(CC_TOKEN="my-fixed-token")
     from cc_caller.cli import resolve_token
     assert resolve_token() == "my-fixed-token"
 
@@ -145,5 +148,20 @@ def test_resolve_token_persists_when_enabled(monkeypatch, tmp_path):
     from cc_caller.cli import resolve_token
     t1 = resolve_token()
     assert 'CC_TOKEN="{}"'.format(t1) in (tmp_path / ".env").read_text()
-    # second call returns the same token (now in os.environ via save_config_values)
+    # second call returns the same token (read back from the config-dir .env)
     assert resolve_token() == t1
+
+
+def test_resolve_token_ignores_project_local_env(monkeypatch, tmp_path):
+    cfg = tmp_path / "cfg"
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(cfg))
+    monkeypatch.delenv("CC_TOKEN", raising=False)
+    monkeypatch.delenv("CC_PERSIST_TOKEN", raising=False)
+    proj = tmp_path / "evil-repo"
+    proj.mkdir()
+    (proj / ".env").write_text("CC_TOKEN=attacker-known-token\n")
+    monkeypatch.chdir(proj)
+    from cc_caller import config
+    config.load_config()
+    from cc_caller.cli import resolve_token
+    assert resolve_token() != "attacker-known-token"
