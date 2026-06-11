@@ -65,6 +65,34 @@ notification — tap it and the agent opens the call by reading the result.
 The printed URL contains a per-run secret token; only static assets are
 served without it.
 
+## Stable URL (optional)
+
+By default each run gets a fresh `trycloudflare.com` URL — fine for trying it
+out, but the installed PWA points at a dead address after a restart. For a
+URL that survives restarts:
+
+**Easiest — ngrok free static domain**: sign up at
+[ngrok.com](https://ngrok.com), grab your authtoken and your free static
+domain from the dashboard, then:
+
+```bash
+# in ~/.config/cc-caller/.env
+NGROK_AUTHTOKEN=your-authtoken
+NGROK_DOMAIN=your-name.ngrok-free.app
+CC_PERSIST_TOKEN=1
+```
+
+and run `cc-caller --tunnel ngrok`. (ngrok free shows a one-click browser
+notice on first visit.)
+
+**Custom domain — Cloudflare named tunnel**: if you own a domain on
+Cloudflare, create a named tunnel (`cloudflared tunnel create`, route DNS),
+run it, and point cc-caller at it: `cc-caller --tunnel-url https://cc.yourdomain.com`.
+
+`CC_PERSIST_TOKEN=1` stores the access token across runs so the
+Add-to-Home-Screen app keeps working after restarts. Only use it with a
+stable domain you trust — it turns the per-run token into a long-lived one.
+
 ## During a call
 
 - **Give a task** — speak naturally; the agent sends it to Claude

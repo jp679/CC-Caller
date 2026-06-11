@@ -23,6 +23,9 @@ def start_tunnel(port: int, method: str) -> tuple:
         raise RuntimeError("Cloudflare tunnel failed to start")
     else:
         from pyngrok import ngrok
+        authtoken = os.getenv("NGROK_AUTHTOKEN", "")
+        if authtoken:
+            ngrok.set_auth_token(authtoken)
         domain = os.getenv("NGROK_DOMAIN", "")
         kwargs = {"addr": port, "proto": "http"}
         if domain:

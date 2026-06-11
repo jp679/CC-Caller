@@ -33,6 +33,22 @@ def show_exchange_enabled():
     return os.getenv("CC_SHOW_EXCHANGE", "1").strip().lower() not in ("0", "false", "no", "off")
 
 
+def resolve_token():
+    """Per-run random token by default. CC_TOKEN fixes it; CC_PERSIST_TOKEN=1
+    generates one and stores it in the config dir (long-lived bearer -- pair
+    it with a stable tunnel domain, where it keeps the installed PWA working
+    across restarts)."""
+    explicit = os.getenv("CC_TOKEN", "").strip()
+    if explicit:
+        return explicit
+    if os.getenv("CC_PERSIST_TOKEN", "0").strip().lower() not in ("0", "false", "no", "off", ""):
+        token = secrets.token_urlsafe(32)
+        config.save_config_values(CC_TOKEN=token)
+        print("Generated persistent token (saved to {})".format(config.config_dir() / ".env"))
+        return token
+    return secrets.token_urlsafe(32)
+
+
 LEGACY_TRIGGERS = {
     "--sip", "--pwa", "--vapi-pwa", "--phone", "--inbound",
     "--mode", "--interval-minutes",
@@ -166,7 +182,7 @@ def run_gemini_pwa(args):
         probe.close()
 
     vapid_priv, vapid_pub = push.ensure_vapid_keys()
-    token = secrets.token_urlsafe(32)
+    token = resolve_token()
     task_manager = TaskManager(session_name=args.session, new_session=args.new_session,
                                show_exchange=show_exchange)
     state = AppState(

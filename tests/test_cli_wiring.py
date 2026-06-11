@@ -118,3 +118,32 @@ def test_show_exchange_flag_parsing(monkeypatch):
         assert show_exchange_enabled() is False
     monkeypatch.setenv("CC_SHOW_EXCHANGE", "1")
     assert show_exchange_enabled() is True
+
+
+def test_resolve_token_random_by_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("CC_TOKEN", raising=False)
+    monkeypatch.delenv("CC_PERSIST_TOKEN", raising=False)
+    from cc_caller.cli import resolve_token
+    t1, t2 = resolve_token(), resolve_token()
+    assert t1 != t2
+    assert len(t1) > 20
+    assert not (tmp_path / ".env").exists()
+
+
+def test_resolve_token_honors_explicit_cc_token(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("CC_TOKEN", "my-fixed-token")
+    from cc_caller.cli import resolve_token
+    assert resolve_token() == "my-fixed-token"
+
+
+def test_resolve_token_persists_when_enabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("CC_TOKEN", raising=False)
+    monkeypatch.setenv("CC_PERSIST_TOKEN", "1")
+    from cc_caller.cli import resolve_token
+    t1 = resolve_token()
+    assert 'CC_TOKEN="{}"'.format(t1) in (tmp_path / ".env").read_text()
+    # second call returns the same token (now in os.environ via save_config_values)
+    assert resolve_token() == t1
