@@ -256,6 +256,40 @@ def test_build_system_prompt_includes_resumed_messages(tmp_path, monkeypatch):
     assert build_system_prompt(state) == build_system_prompt(state, resumed=[])
 
 
+def test_ws_builds_opener_from_pending(tmp_path, monkeypatch):
+    state = make_state(tmp_path, monkeypatch)
+    state.task_manager.pending = {"task": "t", "summary": "the tests now pass",
+                                  "detail": "", "meta": {}}
+    captured = {}
+
+    class StubSession:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def run(self, browser_messages):
+            return
+
+    import cc_caller.server as server_mod
+    monkeypatch.setattr(server_mod, "GeminiLiveSession", StubSession)
+    client = TestClient(create_app(state))
+    try:
+        with client.websocket_connect("/ws?token=sekrit"):
+            pass
+    except WebSocketDisconnect:
+        pass
+    assert "the tests now pass" in captured["opening"]
+    assert captured["opening"].startswith("[SYSTEM]")
+
+    captured.clear()
+    state.task_manager.pending = None
+    try:
+        with client.websocket_connect("/ws?token=sekrit"):
+            pass
+    except WebSocketDisconnect:
+        pass
+    assert captured["opening"] is None
+
+
 def test_ws_sends_transcript_frames_before_ready(tmp_path, monkeypatch):
     state = make_state(tmp_path, monkeypatch)
     fake_msgs = [{"role": "user", "text": "old question"},

@@ -141,6 +141,13 @@ def create_app(state):
             except Exception:
                 break
 
+        opening = None
+        pend = state.task_manager.pending
+        if pend:
+            opening = ("[SYSTEM] The user just reconnected after stepping away. "
+                       "Greet them briefly, then tell them this finished result right away: "
+                       + pend["summary"])
+
         session = GeminiLiveSession(
             api_key=state.api_key,
             system_prompt=build_system_prompt(state, resumed=resumed),
@@ -149,6 +156,7 @@ def create_app(state):
             model=state.model,
             on_ready=state.task_manager.take_pending,
             show_exchange=state.show_exchange,
+            opening=opening,
         )
         state.session_holder["session"] = session
 

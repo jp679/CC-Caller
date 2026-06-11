@@ -58,7 +58,8 @@ class GeminiLiveSession:
     """
 
     def __init__(self, api_key, system_prompt, task_manager, send_to_browser,
-                 model=None, ws_url=None, on_ready=None, show_exchange=False):
+                 model=None, ws_url=None, on_ready=None, show_exchange=False,
+                 opening=None):
         self.api_key = api_key
         self.system_prompt = system_prompt
         self.tm = task_manager
@@ -67,6 +68,7 @@ class GeminiLiveSession:
         self.ws_url = ws_url or GEMINI_WS_URL
         self.on_ready = on_ready
         self.show_exchange = show_exchange
+        self.opening = opening
         self.async_tools = True
         self.alive = False
         self.ended = False
@@ -129,6 +131,11 @@ class GeminiLiveSession:
                                                 "name": getattr(self.tm, "session_name", None)}})
         if self.on_ready:
             self.on_ready()
+        if self.opening:
+            await self._ws.send(json.dumps({"clientContent": {
+                "turns": [{"role": "user", "parts": [{"text": self.opening}]}],
+                "turnComplete": True,
+            }}))
         browser_task = asyncio.ensure_future(self._pump_browser(browser_messages))
         gemini_task = asyncio.ensure_future(self._pump_gemini())
         try:

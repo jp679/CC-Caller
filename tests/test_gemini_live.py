@@ -334,3 +334,26 @@ async def test_ready_frame_includes_session_identity():
         ready = [m for m in h.to_browser if m.get("type") == "ready"][0]
         assert ready["session"] == {"id": "abc-12345678", "name": "myproj"}
         await h.stop()
+
+
+async def test_opening_injected_after_ready():
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.session.opening = "[SYSTEM] Greet and report: all tests pass"
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await wait_until(lambda: fake.received_of("clientContent"))
+        turn = fake.received_of("clientContent")[0]["clientContent"]["turns"][0]
+        assert "all tests pass" in turn["parts"][0]["text"]
+        assert fake.received_of("clientContent")[0]["clientContent"]["turnComplete"] is True
+        await h.stop()
+
+
+async def test_no_opening_no_client_content():
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await asyncio.sleep(0.1)
+        assert not fake.received_of("clientContent")
+        await h.stop()
