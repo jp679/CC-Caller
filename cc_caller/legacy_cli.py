@@ -67,10 +67,6 @@ def main():
     parser.add_argument("instruction", nargs="?", default=None, help="Initial instruction for Claude (omit for inbound mode)")
     parser.add_argument("--mode", choices=["always", "on-need", "interval"], default="always")
     parser.add_argument("--inbound", action="store_true", help="Wait for an inbound call instead of starting with an instruction")
-    parser.add_argument("--web", action="store_true", help="Use VAPI web-based voice calls instead of phone")
-    parser.add_argument("--gemini", action="store_true", help="Use Gemini Live for voice (free, no VAPI needed)")
-    parser.add_argument("--live", action="store_true", help="Persistent Gemini voice session — no hang-up/call-back loop")
-    parser.add_argument("--bridge", action="store_true", help="Persistent Gemini voice session — server-side bridge, best mode")
     parser.add_argument("--pwa", action="store_true", help="Serve a PWA — browser voice call with push notifications, no app install")
     parser.add_argument("--sip", action="store_true", help="Use SIP for inbound calls (native phone ring via Linphone/Zoiper)")
     parser.add_argument("--tunnel", choices=["cloudflare", "ngrok"], default="cloudflare", help="Tunnel provider (default: cloudflare, free)")
@@ -81,13 +77,12 @@ def main():
     parser.add_argument("--port", type=int, default=int(os.getenv("WEBHOOK_PORT", "8765")))
     args = parser.parse_args()
 
-    if args.live or args.bridge or args.pwa:
-        args.inbound = True  # --live/--bridge/--pwa imply inbound
+    if args.pwa:
+        args.inbound = True  # --pwa implies inbound
     if not args.inbound and not args.instruction:
         parser.error("Either provide an instruction or use --inbound")
 
     mode = CallMode(args.mode)
-    gemini_key = os.getenv("GEMINI_API_KEY", "")
     api_key = os.getenv("VAPI_API_KEY", "")
     public_key = os.getenv("VAPI_PUBLIC_KEY", "")
     phone_number_id = os.getenv("VAPI_PHONE_NUMBER_ID", "")
@@ -95,15 +90,11 @@ def main():
     customer_number = os.getenv("USER_PHONE_NUMBER", "")
     sip_uri = os.getenv("VAPI_SIP_URI", "sip:cc-caller@sip.vapi.ai")
 
-    if args.gemini and not gemini_key:
-        parser.error("--gemini requires GEMINI_API_KEY in .env")
     if args.sip and not (api_key and sip_phone_number_id):
         parser.error("--sip requires VAPI_API_KEY and VAPI_SIP_PHONE_NUMBER_ID in .env")
     if args.pwa and not public_key:
         parser.error("--pwa requires VAPI_PUBLIC_KEY in .env")
-    if args.web and not public_key:
-        parser.error("--web requires VAPI_PUBLIC_KEY in .env")
-    if not args.gemini and not args.web and not args.sip and not api_key:
+    if not args.sip and not api_key:
         parser.error("Phone mode requires VAPI_API_KEY in .env")
 
     # Clear stale assistants from previous crashed sessions
@@ -299,333 +290,135 @@ def main():
             cleanup_tunnel()
         return
 
-    elif args.bridge:
-        gemini_key = os.getenv("GEMINI_API_KEY", "")
-        if not gemini_key:
-            print("ERROR: --bridge requires GEMINI_API_KEY")
-            return
+    elif args.sip:
+        from cc_caller.vapi.client import build_persistent_sip_config
 
-        use_sip = args.sip
+        api_key = os.environ["VAPI_API_KEY"]
+        sip_phone_number_id = os.environ["VAPI_SIP_PHONE_NUMBER_ID"]
+        phone_number_id = os.getenv("VAPI_PHONE_NUMBER_ID", "")
+        customer_number = os.getenv("USER_PHONE_NUMBER", "")
+        sip_uri = os.getenv("VAPI_SIP_URI", "sip:cc-caller@sip.vapi.ai")
 
-        system_prompt = (
-            "You are a voice telephone operator. You relay messages between a caller and a backend system.\n"
-            "You have ZERO knowledge of any project, code, website, or files. You are just a telephone operator.\n\n"
-            "RULES:\n"
-            "- First message: 'Hey, what would you like me to work on?'\n"
-            "- When the caller speaks: say 'Got it, checking now.' and STOP. Say nothing else. Wait silently.\n"
-            "- When you receive a text message starting with RELAY: read ONLY the text after RELAY: to the caller. Read it exactly. Then say 'What would you like to do next?'\n"
-            "- When the caller says 'end session': say 'Goodbye.'\n\n"
-            "CRITICAL RULES:\n"
-            "- NEVER answer questions about code, files, recipes, websites, or any technical topic.\n"
-            "- NEVER use information from previous RELAY: messages to answer new questions.\n"
-            "- If the caller asks a question and you have NOT just received a RELAY: message with the answer, say 'Let me check on that.' and STOP.\n"
-            "- You are a TELEPHONE OPERATOR. You know NOTHING. You only relay messages.\n"
-            "- Be extremely brief. Never elaborate."
-        )
+        # Track call state for hybrid mode
+        call_active = threading.Event()
+        call_active.set()  # Assume active initially
+        pending_result = {"output": None}  # Stores result if call drops mid-task
+        tool_lock = threading.Lock()  # Prevent concurrent tool calls
 
-        if use_sip:
-            from cc_caller.vapi.client import build_persistent_sip_config
+        # Build assistant with askCodingAgent tool
+        sip_config = build_persistent_sip_config(webhook_url)
+        configure_inbound_number(api_key, sip_phone_number_id, sip_config)
 
-            api_key = os.environ["VAPI_API_KEY"]
-            sip_phone_number_id = os.environ["VAPI_SIP_PHONE_NUMBER_ID"]
-            phone_number_id = os.getenv("VAPI_PHONE_NUMBER_ID", "")
-            customer_number = os.getenv("USER_PHONE_NUMBER", "")
-            sip_uri = os.getenv("VAPI_SIP_URI", "sip:cc-caller@sip.vapi.ai")
+        # Track call lifecycle via webhook events
+        original_call_active = True
 
-            # Track call state for hybrid mode
-            call_active = threading.Event()
-            call_active.set()  # Assume active initially
-            pending_result = {"output": None}  # Stores result if call drops mid-task
-            tool_lock = threading.Lock()  # Prevent concurrent tool calls
+        def on_webhook_event(event_type):
+            if event_type == "end-of-call-report":
+                print("[hybrid] Call ended")
+                call_active.clear()
+                # If Claude is still working, wait for it to finish
+                if task_in_progress.is_set():
+                    print("[hybrid] Task still in progress — will call back when done")
+                    def wait_and_callback():
+                        task_in_progress.wait(timeout=60)
+                        time.sleep(2)  # Let the handler store the result
+                        # pending_result should now be set
+                    threading.Thread(target=wait_and_callback, daemon=True).start()
 
-            # Build assistant with askCodingAgent tool
-            sip_config = build_persistent_sip_config(webhook_url)
-            configure_inbound_number(api_key, sip_phone_number_id, sip_config)
+        app.state.on_webhook_event = on_webhook_event
 
-            # Track call lifecycle via webhook events
-            original_call_active = True
+        # Tool-call handler with hybrid support
+        task_in_progress = threading.Event()
 
-            def on_webhook_event(event_type):
-                if event_type == "end-of-call-report":
-                    print("[hybrid] Call ended")
-                    call_active.clear()
-                    # If Claude is still working, wait for it to finish
-                    if task_in_progress.is_set():
-                        print("[hybrid] Task still in progress — will call back when done")
-                        def wait_and_callback():
-                            task_in_progress.wait(timeout=60)
-                            time.sleep(2)  # Let the handler store the result
-                            # pending_result should now be set
-                        threading.Thread(target=wait_and_callback, daemon=True).start()
-
-            app.state.on_webhook_event = on_webhook_event
-
-            # Tool-call handler with hybrid support
-            task_in_progress = threading.Event()
-
-            def handle_tool_call(task: str) -> str:
-                nonlocal session_id, first_run
-                # Tool call from VAPI means a call is active
-                call_active.set()
-                if not tool_lock.acquire(timeout=1):
-                    print("[tool] Already processing a task, skipping duplicate")
-                    return "Still working on the previous request. Please wait."
-                try:
-                    print(f"\n[tool] Task: {task}")
-                    task_in_progress.set()
-                    instruction = clean_transcript(task)
-                    print(f"[tool] Cleaned: {instruction}")
-                    output, session_id = run_claude(instruction, session_id, session_name=session_name, is_first_run=first_run)
-                    first_run = False
-                    print(f"[tool] Claude output: {len(output)} chars")
-                    task_in_progress.clear()
-                except Exception as e:
-                    task_in_progress.clear()
-                    tool_lock.release()
-                    raise e
-
-                truncated = output[:2000] if len(output) > 2000 else output
-                log_interaction(task, truncated)
-
-                # Check if call is still active
-                if call_active.is_set():
-                    tool_lock.release()
-                    return truncated
-                else:
-                    print("[hybrid] Call dropped during task — will call back")
-                    pending_result["output"] = truncated
-                    tool_lock.release()
-                    return truncated
-
-            app.state.tool_call_handler = handle_tool_call
-
-            print(f"SIP URI: {sip_uri}")
-            print("Dial from Linphone — hybrid persistent session")
-            send_notification(
-                title="CC-Caller Live Ready",
-                message="Dial from Linphone",
-                url=sip_uri,
-            )
-
-            # Main loop — handles callbacks when call drops mid-task
+        def handle_tool_call(task: str) -> str:
+            nonlocal session_id, first_run
+            # Tool call from VAPI means a call is active
+            call_active.set()
+            if not tool_lock.acquire(timeout=1):
+                print("[tool] Already processing a task, skipping duplicate")
+                return "Still working on the previous request. Please wait."
             try:
-                print("\nHybrid session active. Press Ctrl+C to exit.")
-                while True:
-                    time.sleep(1)
-
-                    # Check if there's a pending result to call back with
-                    if pending_result["output"] and not call_active.is_set() and not task_in_progress.is_set():
-                        output = pending_result["output"]
-                        pending_result["output"] = None
-                        print(f"\n[hybrid] Calling back with result ({len(output)} chars)...")
-
-                        # Summarize for callback
-                        summary_data = summarize_output(output)
-
-                        # Build callback assistant config
-                        callback_config = build_assistant_config(
-                            summary=summary_data["summary"],
-                            detail=summary_data["detail"],
-                            webhook_url=webhook_url,
-                        )
-
-                        # Configure SIP number with result so redial works
-                        configure_inbound_number(api_key, sip_phone_number_id, callback_config)
-
-                        # Send ntfy with SIP deep link
-                        send_notification(
-                            title="CC-Caller Result Ready",
-                            message=summary_data["summary"][:200],
-                            url=sip_uri,
-                        )
-
-                        print("[hybrid] Result ready — redial from Linphone")
-
-                        # Restore persistent tool config for next inbound call
-                        time.sleep(5)
-                        configure_inbound_number(api_key, sip_phone_number_id, sip_config)
-                        print("[hybrid] SIP number restored to persistent mode")
-
-            except KeyboardInterrupt:
-                print("\nExiting.")
-            finally:
-                clear_inbound_number(api_key, sip_phone_number_id)
-                cleanup_tunnel()
-            return
-        else:
-            from cc_caller.vapi.gemini_bridge import GeminiBridge
-
-            bridge = GeminiBridge(gemini_key, system_prompt, transcript_queue)
-            app.state.gemini_bridge = bridge
-
-            call_url = f"{public_url}/call-bridge"
-            print(f"Browser join: {call_url}")
-            send_notification(
-                title="CC-Caller Live Ready",
-                message="Tap to start live voice session",
-                url=call_url,
-            )
-
-        # Main loop
-        try:
-            while True:
-                print("\nWaiting for your voice input...")
-                try:
-                    transcript = transcript_queue.get(timeout=7200)
-                except queue.Empty:
-                    print("Session idle timeout.")
-                    break
-
-                print(f"Raw transcript: {transcript}")
-
-                if is_termination(transcript):
-                    print("Termination signal received.")
-                    break
-
-                print("Cleaning transcript...")
-                instruction = clean_transcript(transcript)
-                print(f"Instruction: {instruction}")
-
-                # Progress pings
-                progress_stop = threading.Event()
-                def push_progress():
-                    while not progress_stop.is_set():
-                        progress_stop.wait(15)
-                        if not progress_stop.is_set():
-                            bridge.inject_text("RELAY: Still working on that.")
-                            print("  [progress ping]")
-
-                progress_thread = threading.Thread(target=push_progress, daemon=True)
-                progress_thread.start()
-
-                print("--- Running Claude ---")
+                print(f"\n[tool] Task: {task}")
+                task_in_progress.set()
+                instruction = clean_transcript(task)
+                print(f"[tool] Cleaned: {instruction}")
                 output, session_id = run_claude(instruction, session_id, session_name=session_name, is_first_run=first_run)
                 first_run = False
-                progress_stop.set()
-                print(f"Output length: {len(output)} chars")
+                print(f"[tool] Claude output: {len(output)} chars")
+                task_in_progress.clear()
+            except Exception as e:
+                task_in_progress.clear()
+                tool_lock.release()
+                raise e
 
-                # Inject result directly into Gemini
-                truncated = output[:2000] if len(output) > 2000 else output
-                log_interaction(instruction, truncated)
-                bridge.inject_text(f"RELAY: {truncated}")
-                print("Result injected into Gemini session")
+            truncated = output[:2000] if len(output) > 2000 else output
+            log_interaction(task, truncated)
 
-        except KeyboardInterrupt:
-            print("\nInterrupted.")
-        finally:
-            cleanup_tunnel()
-        return
+            # Check if call is still active
+            if call_active.is_set():
+                tool_lock.release()
+                return truncated
+            else:
+                print("[hybrid] Call dropped during task — will call back")
+                pending_result["output"] = truncated
+                tool_lock.release()
+                return truncated
 
-    elif args.live:
-        print("\n--- Live mode (persistent Gemini session) ---")
-        gemini_key = os.getenv("GEMINI_API_KEY", "")
-        if not gemini_key:
-            print("ERROR: --live requires GEMINI_API_KEY in .env")
-            cleanup_tunnel()
-            return
+        app.state.tool_call_handler = handle_tool_call
 
-        with app.state.web_call_lock:
-            app.state.live_gemini_config = {
-                "geminiKey": gemini_key,
-                "model": "gemini-3.1-flash-live-preview",
-            }
-        call_url = f"{public_url}/call-gemini-live"
-        print(f"Open {call_url} to start a live session")
+        print(f"SIP URI: {sip_uri}")
+        print("Dial from Linphone — hybrid persistent session")
         send_notification(
             title="CC-Caller Live Ready",
-            message="Tap to start a live voice session",
-            url=call_url,
+            message="Dial from Linphone",
+            url=sip_uri,
         )
 
-        # Live loop: wait for transcript → run claude → push result via SSE → repeat
+        # Main loop — handles callbacks when call drops mid-task
         try:
+            print("\nHybrid session active. Press Ctrl+C to exit.")
             while True:
-                print("\nWaiting for your voice input...")
-                try:
-                    transcript = transcript_queue.get(timeout=7200)  # 2hr timeout
-                except queue.Empty:
-                    print("Session idle timeout. Exiting.")
-                    break
+                time.sleep(1)
 
-                print(f"Raw transcript: {transcript}")
+                # Check if there's a pending result to call back with
+                if pending_result["output"] and not call_active.is_set() and not task_in_progress.is_set():
+                    output = pending_result["output"]
+                    pending_result["output"] = None
+                    print(f"\n[hybrid] Calling back with result ({len(output)} chars)...")
 
-                if is_termination(transcript):
-                    print("Termination signal received. Exiting.")
-                    break
+                    # Summarize for callback
+                    summary_data = summarize_output(output)
 
-                print("Cleaning transcript...")
-                instruction = clean_transcript(transcript)
-                print(f"Instruction: {instruction}")
+                    # Build callback assistant config
+                    callback_config = build_assistant_config(
+                        summary=summary_data["summary"],
+                        detail=summary_data["detail"],
+                        webhook_url=webhook_url,
+                    )
 
-                # Push progress updates while Claude works
-                progress_stop = threading.Event()
-                def push_progress():
-                    while not progress_stop.is_set():
-                        progress_stop.wait(15)
-                        if not progress_stop.is_set():
-                            app.state.live_msg_counter += 1
-                            app.state.live_messages.append({"type": "progress", "message": "Still working on that...", "id": app.state.live_msg_counter})
-                            print("  [progress ping]")
+                    # Configure SIP number with result so redial works
+                    configure_inbound_number(api_key, sip_phone_number_id, callback_config)
 
-                progress_thread = threading.Thread(target=push_progress, daemon=True)
-                progress_thread.start()
+                    # Send ntfy with SIP deep link
+                    send_notification(
+                        title="CC-Caller Result Ready",
+                        message=summary_data["summary"][:200],
+                        url=sip_uri,
+                    )
 
-                print("--- Running Claude ---")
-                output, session_id = run_claude(instruction, session_id, session_name=session_name, is_first_run=first_run)
-                first_run = False
-                progress_stop.set()
-                print(f"Output length: {len(output)} chars")
-                log_interaction(instruction, output)
+                    print("[hybrid] Result ready — redial from Linphone")
 
-                # Push result to Gemini via SSE
-                app.state.live_msg_counter += 1
-                app.state.live_messages.append({"type": "result", "message": output, "id": app.state.live_msg_counter})
-                # Keep only last 20 messages
-                if len(app.state.live_messages) > 20:
-                    app.state.live_messages = app.state.live_messages[-20:]
-                print("Result pushed to live session")
+                    # Restore persistent tool config for next inbound call
+                    time.sleep(5)
+                    configure_inbound_number(api_key, sip_phone_number_id, sip_config)
+                    print("[hybrid] SIP number restored to persistent mode")
 
         except KeyboardInterrupt:
-            print("\nInterrupted. Exiting.")
+            print("\nExiting.")
         finally:
+            clear_inbound_number(api_key, sip_phone_number_id)
             cleanup_tunnel()
         return
-
-    elif args.inbound and args.gemini:
-        print("\n--- Gemini Live inbound mode ---")
-        gemini_system = (
-            "You are a task intake assistant for a coding agent.\n"
-            "The user is calling to give you a task. Your job:\n"
-            "1) Greet them briefly and ask what they'd like the coding assistant to work on.\n"
-            "2) Listen to their task description.\n"
-            "3) Confirm what you heard back to them in one sentence.\n"
-            "4) Say 'Got it, starting now.' and stop talking.\n"
-            "Keep it short and natural."
-        )
-        with app.state.web_call_lock:
-            app.state.pending_gemini_call = {
-                "systemPrompt": gemini_system,
-                "geminiKey": gemini_key,
-                "model": "gemini-3.1-flash-live-preview",
-            }
-        call_url = f"{public_url}/call-gemini"
-        print(f"Open {call_url} to start a task")
-        send_notification(
-            title="CC-Caller Ready",
-            message="Tap to connect and give your task",
-            url=call_url,
-        )
-        try:
-            instruction = transcript_queue.get()
-        except KeyboardInterrupt:
-            print("\nInterrupted while waiting. Exiting.")
-            cleanup_tunnel()
-            return
-        print(f"You said: {instruction}")
-        if is_termination(instruction):
-            print("Termination signal received. Exiting.")
-            cleanup_tunnel()
-            return
 
     elif args.inbound and args.sip:
         print("\n--- SIP inbound mode ---")
@@ -648,33 +441,6 @@ def main():
         if is_termination(instruction):
             print("Termination signal received. Exiting.")
             clear_inbound_number(api_key, sip_phone_number_id)
-            cleanup_tunnel()
-            return
-
-    elif args.inbound and args.web:
-        print("\n--- Web inbound mode ---")
-        inbound_config = build_inbound_assistant_config(webhook_url)
-        with app.state.web_call_lock:
-            app.state.pending_web_call = {
-                "assistantConfig": inbound_config,
-                "publicKey": public_key,
-            }
-        call_url = f"{public_url}/call"
-        print(f"Open {call_url} to start a task")
-        send_notification(
-            title="CC-Caller Ready",
-            message="Tap to connect and give your task",
-            url=call_url,
-        )
-        try:
-            instruction = transcript_queue.get()
-        except KeyboardInterrupt:
-            print("\nInterrupted while waiting. Exiting.")
-            cleanup_tunnel()
-            return
-        print(f"You said: {instruction}")
-        if is_termination(instruction):
-            print("Termination signal received. Exiting.")
             cleanup_tunnel()
             return
 
@@ -726,36 +492,7 @@ def main():
                 webhook_url=webhook_url,
             )
 
-            if args.gemini:
-                gemini_system = (
-                    "You are a voice relay for a coding assistant.\n"
-                    "Read the SUMMARY below to the user. They can interrupt anytime.\n"
-                    "Rules:\n"
-                    "- Read ONLY the summary. Do NOT read the detail unless asked.\n"
-                    "- If they ask for more detail, read from the DETAIL section.\n"
-                    "- Collect any instructions they give.\n"
-                    "- After collecting instructions, ask: 'Should I keep working and call you back, or are we done?'\n"
-                    "- If they want to continue, say 'On it, I'll call back when done.' and stop talking.\n"
-                    "- If they want to stop, say 'Got it, ending session.' and stop talking.\n"
-                    "Do NOT answer coding questions yourself. Keep responses short.\n\n"
-                    f"SUMMARY:\n{summary_data['summary']}\n\n"
-                    f"DETAIL:\n{summary_data['detail']}"
-                )
-                print("Preparing Gemini call...")
-                with app.state.web_call_lock:
-                    app.state.pending_gemini_call = {
-                        "systemPrompt": gemini_system,
-                        "geminiKey": gemini_key,
-                        "model": "gemini-3.1-flash-live-preview",
-                    }
-                call_url = f"{public_url}/call-gemini"
-                print(f"Gemini call ready at {call_url}")
-                send_notification(
-                    title="CC-Caller Update",
-                    message=summary_data["summary"][:200],
-                    url=call_url,
-                )
-            elif args.sip:
+            if args.sip:
                 print("Preparing SIP callback...")
                 configure_inbound_number(api_key, sip_phone_number_id, assistant_config)
                 print(f"Dial {sip_uri} from Linphone for the update")
@@ -763,20 +500,6 @@ def main():
                     title="CC-Caller Update",
                     message=summary_data["summary"][:200],
                     url=sip_uri,
-                )
-            elif args.web:
-                print("Preparing web call...")
-                with app.state.web_call_lock:
-                    app.state.pending_web_call = {
-                        "assistantConfig": assistant_config,
-                        "publicKey": public_key,
-                    }
-                call_url = f"{public_url}/call"
-                print(f"Web call ready at {call_url}")
-                send_notification(
-                    title="CC-Caller Update",
-                    message=summary_data["summary"][:200],
-                    url=call_url,
                 )
             else:
                 print(f"Calling {customer_number}...")
@@ -793,23 +516,11 @@ def main():
                 transcript = transcript_queue.get(timeout=600)
             except queue.Empty:
                 print("No response after 10 minutes. Retrying...")
-                if args.gemini:
-                    send_notification(
-                        title="CC-Caller: Still waiting",
-                        message="Tap to connect",
-                        url=f"{public_url}/call-gemini",
-                    )
-                elif args.sip:
+                if args.sip:
                     send_notification(
                         title="CC-Caller: Still waiting",
                         message="Tap to connect",
                         url=sip_uri,
-                    )
-                elif args.web:
-                    send_notification(
-                        title="CC-Caller: Still waiting",
-                        message="Tap to connect",
-                        url=f"{public_url}/call",
                     )
                 else:
                     create_call(

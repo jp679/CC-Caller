@@ -23,8 +23,8 @@ from cc_caller.tasks import TaskManager
 from cc_caller.tunnel import start_tunnel
 
 LEGACY_TRIGGERS = {
-    "--sip", "--web", "--pwa", "--vapi-pwa", "--phone", "--inbound",
-    "--mode", "--interval-minutes", "--gemini", "--live", "--bridge",
+    "--sip", "--pwa", "--vapi-pwa", "--phone", "--inbound",
+    "--mode", "--interval-minutes",
 }
 
 
