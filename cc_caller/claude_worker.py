@@ -1,9 +1,13 @@
-"""Claude Code worker subprocess layer: sandboxed runs, sessions, judge prompts."""
+"""Claude Code worker layer: sandboxed Agent SDK runs, sessions, judge prompts."""
 import pathlib
 import subprocess
 import tempfile
 import uuid
-from typing import Tuple
+
+from claude_agent_sdk import (
+    query, ClaudeAgentOptions, AssistantMessage, SystemMessage, ResultMessage,
+    TextBlock, ToolUseBlock,
+)
 
 
 NEED_INPUT_PROMPT = (
@@ -79,36 +83,85 @@ def clean_transcript(raw_transcript: str) -> str:
     return cleaned
 
 
-def run_claude(instruction: str, session_id: str, session_name: str = "caller", is_first_run: bool = False) -> Tuple[str, str]:
-    base_cmd = [
-        "claude", "-p", "--output-format", "text",
-        "--append-system-prompt", WORKER_SYSTEM_PROMPT,
-        "--disallowedTools", "Bash(cc-caller*) Bash(python*cc_caller*) Bash(python*vapi*) Bash(curl*vapi*) Bash(curl*twilio*)",
-    ]
-    if session_name:
-        base_cmd += ["--name", session_name]
-    def _is_error(r):
-        combined = (r.stdout + r.stderr).lower()
-        return r.returncode != 0 or "api error: 400" in combined or "concurrency" in combined
+# Tool-use patterns the worker is never allowed to run (split from the old
+# single-string --disallowedTools value; same patterns, SDK list form).
+DISALLOWED_TOOL_PATTERNS = [
+    "Bash(cc-caller*)", "Bash(python*cc_caller*)", "Bash(python*vapi*)",
+    "Bash(curl*vapi*)", "Bash(curl*twilio*)",
+]
 
-    if is_first_run:
-        cmd = base_cmd + ["--resume", session_id, instruction]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if _is_error(result):
-            session_id = str(uuid.uuid4())
-            cmd = base_cmd + ["--session-id", session_id, instruction]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            print(f"New session: {session_id}")
-    else:
-        cmd = base_cmd + ["--resume", session_id, instruction]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if _is_error(result):
-            print("Session error, starting fresh...")
-            session_id = str(uuid.uuid4())
-            cmd = base_cmd + ["--session-id", session_id, instruction]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            print(f"New session: {session_id}")
-    return result.stdout, session_id
+
+class WorkerTaskError(RuntimeError):
+    """A task run that completed with an error result."""
+
+
+def _describe_tool_use(block):
+    """Short human string for an activity display: 'Edit cc_caller/server.py'."""
+    target = ""
+    if isinstance(block.input, dict):
+        for key in ("file_path", "path", "pattern", "command", "url", "query"):
+            if block.input.get(key):
+                target = str(block.input[key])
+                break
+    text = "{} {}".format(block.name, target).strip()
+    return text[:80]
+
+
+async def _run_task(instruction, resume_id, on_activity, cwd):
+    options = ClaudeAgentOptions(
+        system_prompt={"type": "preset", "preset": "claude_code",
+                       "append": WORKER_SYSTEM_PROMPT},
+        disallowed_tools=DISALLOWED_TOOL_PATTERNS,
+        resume=resume_id,
+        cwd=str(cwd) if cwd else None,
+    )
+    session_id = resume_id
+    texts = []
+    result_text = None
+    async for message in query(prompt=instruction, options=options):
+        if isinstance(message, SystemMessage):
+            if message.subtype == "init" and message.data.get("session_id"):
+                session_id = message.data["session_id"]
+        elif isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock) and block.text:
+                    texts.append(block.text)
+                elif isinstance(block, ToolUseBlock) and on_activity:
+                    on_activity(_describe_tool_use(block))
+        elif isinstance(message, ResultMessage):
+            session_id = message.session_id or session_id
+            if message.is_error:
+                raise WorkerTaskError(
+                    message.result or "task failed ({})".format(message.subtype))
+            result_text = message.result
+    return (result_text or "\n".join(texts) or ""), session_id
+
+
+def run_claude(instruction, session_id, session_name=None, is_first_run=False,
+               on_activity=None, cwd=None):
+    """Run one task against a (resumable) Claude session via the Agent SDK.
+
+    Returns (output_text, session_id). session_name is retained for
+    compatibility; the SDK has no session-naming concept.
+
+    Resume semantics: when session_id is given we attempt a resume; if the SDK
+    raises for any reason (process/connection error, or a WorkerTaskError from
+    an error result such as "no conversation found") we fall back once to a
+    fresh session and adopt its new id. A fresh-session error is NOT retried --
+    the WorkerTaskError propagates so TaskManager turns it into a spoken
+    failure.
+    """
+    import asyncio
+    if session_id:
+        try:
+            return asyncio.run(_run_task(instruction, session_id, on_activity, cwd))
+        except Exception as e:
+            print("[worker] resume of {} failed ({}); starting a fresh session".format(
+                session_id[:8], type(e).__name__))
+    output, new_id = asyncio.run(_run_task(instruction, None, on_activity, cwd))
+    if session_id and new_id != session_id:
+        print("New session: {}".format(new_id))
+    return output, new_id
 
 
 def check_needs_input(claude_output: str) -> bool:
