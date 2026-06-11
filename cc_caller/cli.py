@@ -11,7 +11,6 @@ warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL 1.1.
 
 import argparse
 import os
-import pathlib
 import secrets
 import shutil
 import socket
@@ -24,7 +23,7 @@ import uvicorn
 
 from cc_caller import config
 from cc_caller import legacy_cli
-from cc_caller import notify, push, sessions
+from cc_caller import notify, push
 from cc_caller.server import AppState, create_app
 from cc_caller.tasks import TaskManager
 from cc_caller.tunnel import start_tunnel
@@ -152,36 +151,6 @@ def print_qr(url):
     qr.print_ascii(invert=True)
 
 
-def pick_session(args):
-    """Interactive session picker. Returns (session_name, new_session, session_id).
-
-    Bypassed when --session-id/--new-session given or stdin is not a TTY."""
-    if args.session != "caller" or args.new_session:
-        return args.session, args.new_session, None
-    if not sys.stdin.isatty():
-        return args.session, args.new_session, None
-    recent = sessions.recent_sessions(limit=5)
-    if not recent:
-        return args.session, args.new_session, None
-    try:
-        print("\nRecent Claude sessions in this folder:")
-        for i, s in enumerate(recent, 1):
-            print("  {}) {:>7}  {}".format(i, s["age"], s["label"]))
-        print("  n) new session")
-        print("(don't resume a session that's open in another terminal)")
-        choice = input("Connect to [1]: ").strip().lower()
-        if choice == "n":
-            default = "{}-{}".format(pathlib.Path.cwd().name, time.strftime("%m%d-%H%M"))
-            name = input("Name for the new session [{}]: ".format(default)).strip() or default
-            return name, False, None
-        idx = int(choice) if choice.isdigit() else 1
-        if not 1 <= idx <= len(recent):
-            idx = 1
-        return None, False, recent[idx - 1]["session_id"]
-    except (KeyboardInterrupt, EOFError):
-        print()
-        raise SystemExit(0)
-
 
 def run_gemini_pwa(args):
     config.load_config()
@@ -213,11 +182,10 @@ def run_gemini_pwa(args):
     finally:
         probe.close()
 
-    session_name, new_session, picked_id = pick_session(args)
     vapid_priv, vapid_pub = push.ensure_vapid_keys()
     token = resolve_token()
-    task_manager = TaskManager(session_name=session_name, new_session=new_session,
-                               session_id=picked_id, show_exchange=show_exchange)
+    task_manager = TaskManager(session_name=args.session, new_session=args.new_session,
+                               show_exchange=show_exchange)
     state = AppState(
         token=token, task_manager=task_manager, api_key=api_key,
         model=args.model, vapid_public_key=vapid_pub,
@@ -249,8 +217,7 @@ def run_gemini_pwa(args):
     url = "{}/?token={}".format(public_url, token)
     print("\nCC-Caller is live. Open on your phone:\n\n  {}\n".format(url))
     print_qr(url)
-    print("\nClaude session: {} | Ctrl-C to stop".format(
-        session_name or "resumed {}".format(picked_id[:8])))
+    print("\nClaude session: {} | Ctrl-C to stop".format(args.session))
 
     if args.instruction:
         print("Starting Claude on: {}".format(args.instruction))
