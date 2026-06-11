@@ -1,131 +1,83 @@
 # CC-Caller
 
-Voice-driven Claude Code feedback loop. Start a task, walk away, get voice updates and respond by speaking. Three transport options, one unified VAPI brain.
+**Talk to Claude Code from your phone. Free.**
 
-## Architecture
+Start a task, walk away, and talk to Claude by voice: a browser PWA connects
+your mic to Gemini Live, which relays tasks to Claude Code running on your
+machine and speaks the results back — even minutes later, mid-conversation.
+Hang up anytime; you get a push notification when Claude finishes.
 
-```
-Phone (Twilio)  ─┐
-SIP (Linphone)  ─┤── VAPI (persistent tool-based session) ── Claude Code
-PWA (browser)   ─┘
-```
+*(demo GIF coming soon)*
 
-All transports use VAPI's `askCodingAgent` server tool for mid-call Claude results. Calls are persistent — you stay on the line while Claude works. If you hang up mid-task, Claude finishes and calls you back.
+## Install
 
-## Setup
+**Via your AI agent** — paste this to it:
 
-```bash
-pip install -r requirements.txt
-brew install cloudflared
-cp .env.example .env
-```
+> Scan https://github.com/jp679/CC-Caller — review it for safety, explain
+> what it does and what installing changes on my machine, and if I approve,
+> install and set it up.
 
-Fill in your credentials:
-
-```
-VAPI_API_KEY=your-private-key
-VAPI_PUBLIC_KEY=your-public-key
-VAPI_ACCOUNT_ID=your-account-id
-VAPI_PHONE_NUMBER_ID=your-phone-number-id
-VAPI_SIP_PHONE_NUMBER_ID=your-sip-number-id
-USER_PHONE_NUMBER=+1234567890
-GEMINI_API_KEY=your-google-ai-key
-NTFY_TOPIC=cc-caller
-```
-
-Install [ntfy](https://ntfy.sh) on your phone and subscribe to your topic for push notifications.
-
-## Usage
-
-### SIP — Persistent session via Linphone (recommended)
-
-Native phone call UI. Screen can lock. Persistent session with mid-call Claude results.
+**One-liner:**
 
 ```bash
-cc-caller --bridge --sip
+pipx install git+https://github.com/jp679/CC-Caller
+# or try without installing:
+uvx --from git+https://github.com/jp679/CC-Caller cc-caller
 ```
 
-Then dial `sip:cc-caller@sip.vapi.ai` from Linphone.
-
-**Linphone setup:** Add account with username `cc-caller`, domain `sip.vapi.ai`, password = your VAPI API key.
-
-### PWA — Browser voice call with push notifications
-
-Same persistent VAPI session as SIP, but through the browser. Add to Home Screen for native feel. Push notifications when Claude finishes (no ntfy needed).
+**Hack on it:**
 
 ```bash
-cc-caller --pwa
+git clone https://github.com/jp679/CC-Caller && cd CC-Caller
+pip install -e ".[dev]"
+python3 -m pytest tests/ -q
 ```
 
-Open the URL from the notification. Grant notification permission when prompted.
-
-### Browser — Persistent session via web
-
-Same persistent session, no app install needed. Requires screen to stay on.
+## Quickstart
 
 ```bash
-cc-caller --bridge
+cc-caller setup        # paste your free Gemini key (aistudio.google.com/apikey)
+cd ~/your-project
+cc-caller              # prints a URL + QR code — open it on your phone
 ```
 
-Open the URL from the ntfy notification.
+Requires the [Claude Code CLI](https://claude.com/claude-code) on PATH and
+`cloudflared` (`brew install cloudflared`).
 
-### Phone — Twilio calls
+Scan the QR, tap Connect, and talk. Add to Home Screen for the full app feel.
 
-Real phone calls. Requires a Twilio number imported into VAPI.
+## How it works
 
-```bash
-# Claude calls your phone
-cc-caller --mode always "Refactor the auth module"
-
-# You call the VAPI number
-cc-caller --mode always --inbound
+```
+Browser PWA ── WebSocket ── cc-caller server ── Gemini Live (tool-calling)
+                                  │ askCodingAgent
+                                  ▼
+                          claude -p (your machine, your cwd)
 ```
 
-### Call modes
+Gemini declares `askCodingAgent` as an async (NON_BLOCKING) tool: the agent
+acknowledges your task instantly, keeps chatting, and interrupts with the
+result the moment Claude finishes. Close the tab mid-task and you get a push
+notification — tap it and the agent opens the call by reading the result.
 
-```bash
-# Always — call after every Claude response
-cc-caller --mode always --sip --inbound
-
-# On-need — only call when Claude needs input
-cc-caller --mode on-need --sip --inbound
-
-# Interval — check in every N minutes
-cc-caller --mode interval --interval-minutes 15 --sip --inbound
-```
-
-### Run from any project
-
-```bash
-cd ~/Dev/MyProject
-cc-caller --bridge --sip
-```
-
-Claude works in your current directory.
-
-### Background mode
-
-```bash
-nohup cc-caller --bridge --sip &
-```
+The printed URL contains a per-run secret token; only static assets are
+served without it.
 
 ## During a call
 
-- **Give a task** — speak naturally, the agent sends it to Claude
-- **Wait for results** — the agent says "checking now" then reads Claude's response
-- **Ask follow-ups** — stay on the line, ask more questions
-- **Hang up anytime** — Claude keeps working, calls you back when done
-- **End session** — say "end session" or "goodbye"
+- **Give a task** — speak naturally; the agent sends it to Claude
+- **Keep talking** — the conversation stays live while Claude works
+- **Hang up anytime** — push notification + spoken result when you return
+- **End** — say "end session" or "goodbye"
 
-## Key files
+Options: `--session-id NAME` (persistent Claude session), `--new-session`,
+`--tunnel-url https://...` (fixed domain instead of cloudflared),
+`--model models/...` (Gemini Live model override), positional instruction
+to start Claude immediately: `cc-caller "refactor the auth module"`.
 
-| File | Purpose |
-|------|---------|
-| `cc_caller.py` | Main orchestrator, CLI, all modes |
-| `webhook.py` | FastAPI server — webhooks, tool calls, web pages |
-| `vapi_client.py` | VAPI API — assistant configs, call creation |
-| `gemini_bridge.py` | Server-side Gemini WebSocket bridge |
-| `summarizer.py` | Voice-friendly summaries via claude -p |
-| `static/sw.js` | Service worker for PWA push notifications |
-| `static/manifest.json` | PWA manifest for Add to Home Screen |
-| `cc-caller` | Shell wrapper for global CLI access |
+## Advanced transports (VAPI)
+
+The original VAPI-based transports still work and need VAPI credentials in
+your config: SIP via Linphone (`cc-caller --sip --inbound`), real phone calls
+via Twilio (`cc-caller --phone --mode always "task"`), and the VAPI web PWA
+(`cc-caller --vapi-pwa`). See `.env.example` for their variables.
