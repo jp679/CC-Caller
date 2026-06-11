@@ -31,9 +31,7 @@ load_dotenv(pathlib.Path(__file__).resolve().parents[1] / ".env")
 
 from cc_caller.claude_worker import (
     name_to_uuid, run_claude, clean_transcript, check_needs_input,
-    is_termination, log_interaction, WORKER_SYSTEM_PROMPT, DISALLOWED_FILES,
-    NEED_INPUT_PROMPT, TERMINATION_CHECK_PROMPT, CLEAN_TRANSCRIPT_PROMPT,
-    TERMINATION_PHRASES,
+    is_termination, log_interaction,
 )
 
 
