@@ -1,6 +1,7 @@
 import queue
 from unittest.mock import patch, MagicMock, call
-from cc_caller.legacy_cli import run_claude, should_call, CallMode, name_to_uuid
+from cc_caller.claude_worker import run_claude, name_to_uuid
+from cc_caller.legacy_cli import should_call, CallMode
 
 
 def test_name_to_uuid_is_deterministic():
@@ -17,7 +18,7 @@ def test_name_to_uuid_different_names():
 
 def test_run_claude_first_run_tries_resume_then_new():
     sid = name_to_uuid("caller")
-    with patch("cc_caller.legacy_cli.subprocess.run") as mock_run:
+    with patch("cc_caller.claude_worker.subprocess.run") as mock_run:
         mock_run.side_effect = [
             MagicMock(stdout="", returncode=1),
             MagicMock(stdout="I refactored the module.\n", returncode=0),
@@ -33,7 +34,7 @@ def test_run_claude_first_run_tries_resume_then_new():
 
 def test_run_claude_subsequent_iteration_resumes():
     sid = name_to_uuid("caller")
-    with patch("cc_caller.legacy_cli.subprocess.run") as mock_run:
+    with patch("cc_caller.claude_worker.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(
             stdout="Done with tests.\n",
             returncode=0,
@@ -50,12 +51,12 @@ def test_should_call_always_mode():
 
 
 def test_should_call_on_need_mode_yes():
-    with patch("cc_caller.legacy_cli.subprocess.run") as mock_run:
+    with patch("cc_caller.claude_worker.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="YES", returncode=0)
         assert should_call(CallMode.ON_NEED, "I need your input on X", last_call_time=0, interval_minutes=0) is True
 
 
 def test_should_call_on_need_mode_no():
-    with patch("cc_caller.legacy_cli.subprocess.run") as mock_run:
+    with patch("cc_caller.claude_worker.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="NO", returncode=0)
         assert should_call(CallMode.ON_NEED, "All tests pass.", last_call_time=0, interval_minutes=0) is False
