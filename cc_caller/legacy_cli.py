@@ -14,9 +14,9 @@ import re
 import uvicorn
 from dotenv import load_dotenv
 
-from summarizer import summarize_output
+from cc_caller.summarizer import summarize_output
 import requests as http_requests
-from vapi_client import (
+from cc_caller.vapi.client import (
     build_assistant_config,
     build_inbound_assistant_config,
     configure_inbound_number,
@@ -24,10 +24,10 @@ from vapi_client import (
     create_call,
     create_web_call,
 )
-from webhook import create_app
+from cc_caller.vapi.webhook import create_app
 
 import pathlib
-load_dotenv(pathlib.Path(__file__).parent / ".env")
+load_dotenv(pathlib.Path(__file__).resolve().parents[1] / ".env")
 
 
 class CallMode(Enum):
@@ -233,7 +233,7 @@ def ensure_vapid_keys() -> tuple:
     priv = base64.urlsafe_b64encode(priv_bytes).rstrip(b'=').decode()
     pub = base64.urlsafe_b64encode(pub_bytes).rstrip(b'=').decode()
 
-    env_path = pathlib.Path(__file__).parent / ".env"
+    env_path = pathlib.Path(__file__).resolve().parents[1] / ".env"
     with open(env_path, "a") as f:
         f.write(f"\nVAPID_PRIVATE_KEY={priv}\nVAPID_PUBLIC_KEY={pub}\n")
     os.environ["VAPID_PRIVATE_KEY"] = priv
@@ -370,7 +370,7 @@ def main():
     first_run = True
 
     if args.pwa:
-        from vapi_client import build_persistent_sip_config
+        from cc_caller.vapi.client import build_persistent_sip_config
 
         vapid_priv, vapid_pub = ensure_vapid_keys()
 
@@ -540,7 +540,7 @@ def main():
         )
 
         if use_sip:
-            from vapi_client import build_persistent_sip_config
+            from cc_caller.vapi.client import build_persistent_sip_config
 
             api_key = os.environ["VAPI_API_KEY"]
             sip_phone_number_id = os.environ["VAPI_SIP_PHONE_NUMBER_ID"]
@@ -669,7 +669,7 @@ def main():
                 cleanup_tunnel()
             return
         else:
-            from gemini_bridge import GeminiBridge
+            from cc_caller.vapi.gemini_bridge import GeminiBridge
 
             bridge = GeminiBridge(gemini_key, system_prompt, transcript_queue)
             app.state.gemini_bridge = bridge

@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 from starlette.responses import StreamingResponse
 
-STATIC_DIR = pathlib.Path(__file__).parent / "static"
+STATIC_DIR = pathlib.Path(__file__).resolve().parents[1] / "static"
 
 
 def create_app(transcript_queue: queue.Queue) -> FastAPI:

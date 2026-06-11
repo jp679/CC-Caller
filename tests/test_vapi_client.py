@@ -1,6 +1,6 @@
 import json
 from unittest.mock import patch, MagicMock
-from vapi_client import build_assistant_config, create_call
+from cc_caller.vapi.client import build_assistant_config, create_call
 
 
 def test_build_assistant_config_includes_summary_and_detail():
@@ -40,7 +40,7 @@ def test_create_call_posts_to_vapi(monkeypatch):
     mock_response.json.return_value = {"id": "call-123", "status": "queued"}
 
     mock_post = MagicMock(return_value=mock_response)
-    monkeypatch.setattr("vapi_client.requests.post", mock_post)
+    monkeypatch.setattr("cc_caller.vapi.client.requests.post", mock_post)
 
     result = create_call(
         api_key="test-key",
@@ -68,7 +68,7 @@ def test_create_call_raises_on_failure(monkeypatch):
     mock_response.raise_for_status.side_effect = Exception("400 Bad Request")
 
     mock_post = MagicMock(return_value=mock_response)
-    monkeypatch.setattr("vapi_client.requests.post", mock_post)
+    monkeypatch.setattr("cc_caller.vapi.client.requests.post", mock_post)
 
     try:
         create_call(

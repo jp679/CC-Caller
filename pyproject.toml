@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cc-caller"
+version = "0.1.0"
+description = "Talk to Claude Code from your phone. Free."
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "requests>=2.32.0",
+    "python-dotenv>=1.0.1",
+    "websockets>=12.0",
+    "pywebpush>=2.0.0",
+    "cryptography>=42.0",
+    "qrcode>=7.4",
+    "pyngrok>=7.2.0",
+]
+
+[project.scripts]
+cc-caller = "cc_caller.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3.0", "pytest-asyncio>=0.23", "httpx>=0.27.0"]
+
+[tool.setuptools.packages.find]
+include = ["cc_caller*"]
+
+[tool.setuptools.package-data]
+cc_caller = ["static/*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

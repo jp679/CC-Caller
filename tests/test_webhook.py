@@ -1,6 +1,6 @@
 import queue
 from fastapi.testclient import TestClient
-from webhook import create_app
+from cc_caller.vapi.webhook import create_app
 
 
 def test_end_of_call_report_extracts_user_messages():
