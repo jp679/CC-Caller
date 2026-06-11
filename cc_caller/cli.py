@@ -6,6 +6,8 @@ their original flags and delegate to legacy_cli unchanged.
 import argparse
 import os
 import secrets
+import shutil
+import socket
 import sys
 import threading
 import time
@@ -119,7 +121,6 @@ def run_gemini_pwa(args):
               "(free key: https://aistudio.google.com/apikey)")
         return 1
 
-    import shutil
     if not shutil.which("claude"):
         print("The `claude` CLI is required: https://claude.com/claude-code")
         return 1
@@ -129,6 +130,17 @@ def run_gemini_pwa(args):
               "  Linux:  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/\n"
               "Or use --tunnel ngrok / --tunnel-url https://your-domain")
         return 1
+
+    port = args.port or int(os.getenv("WEBHOOK_PORT", "8765"))
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        probe.bind(("0.0.0.0", port))
+    except OSError:
+        print("Port {} is already in use — is another cc-caller running? Try --port.".format(port))
+        return 1
+    finally:
+        probe.close()
 
     vapid_priv, vapid_pub = push.ensure_vapid_keys()
     token = secrets.token_urlsafe(32)
@@ -141,7 +153,6 @@ def run_gemini_pwa(args):
     )
     app = create_app(state)
 
-    port = args.port or int(os.getenv("WEBHOOK_PORT", "8765"))
     threading.Thread(
         target=uvicorn.run, args=(app,),
         kwargs={"host": "0.0.0.0", "port": port, "log_level": "warning"},
@@ -151,7 +162,13 @@ def run_gemini_pwa(args):
     if args.tunnel_url:
         public_url, cleanup = args.tunnel_url.rstrip("/"), lambda: None
     else:
-        public_url, cleanup = start_tunnel(port, args.tunnel)
+        try:
+            public_url, cleanup = start_tunnel(port, args.tunnel)
+        except RuntimeError as e:
+            print("Tunnel failed: {}. Check cloudflared works "
+                  "(`cloudflared tunnel --url http://localhost:{}`), "
+                  "or use --tunnel ngrok / --tunnel-url.".format(e, port))
+            return 1
 
     task_manager.on_complete = make_on_complete(state, task_manager, public_url, vapid_priv)
 
