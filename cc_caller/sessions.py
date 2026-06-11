@@ -58,13 +58,20 @@ def recent_sessions(limit=5, cwd=None):
     d = project_transcript_dir(cwd)
     if not d.is_dir():
         return []
-    files = [f for f in d.iterdir() if _SESSION_FILE.match(f.name)]
-    files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    stamped = []
+    for f in d.iterdir():
+        if not _SESSION_FILE.match(f.name):
+            continue
+        try:
+            stamped.append((f.stat().st_mtime, f))
+        except OSError:
+            continue  # vanished between iterdir() and stat()
+    stamped.sort(key=lambda pair: pair[0], reverse=True)
     out = []
-    for f in files[:limit]:
+    for mtime, f in stamped[:limit]:
         out.append({
             "session_id": f.stem,
             "label": (_first_user_text(f) or "(no user messages)")[:60],
-            "age": _age(f.stat().st_mtime),
+            "age": _age(mtime),
         })
     return out

@@ -163,20 +163,24 @@ def pick_session(args):
     recent = sessions.recent_sessions(limit=5)
     if not recent:
         return args.session, args.new_session, None
-    print("\nRecent Claude sessions in this folder:")
-    for i, s in enumerate(recent, 1):
-        print("  {}) {:>7}  {}".format(i, s["age"], s["label"]))
-    print("  n) new session")
-    print("(don't resume a session that's open in another terminal)")
-    choice = input("Connect to [1]: ").strip().lower()
-    if choice == "n":
-        default = "{}-{}".format(pathlib.Path.cwd().name, time.strftime("%m%d-%H%M"))
-        name = input("Name for the new session [{}]: ".format(default)).strip() or default
-        return name, False, None
-    idx = int(choice) if choice.isdigit() else 1
-    if not 1 <= idx <= len(recent):
-        idx = 1
-    return None, False, recent[idx - 1]["session_id"]
+    try:
+        print("\nRecent Claude sessions in this folder:")
+        for i, s in enumerate(recent, 1):
+            print("  {}) {:>7}  {}".format(i, s["age"], s["label"]))
+        print("  n) new session")
+        print("(don't resume a session that's open in another terminal)")
+        choice = input("Connect to [1]: ").strip().lower()
+        if choice == "n":
+            default = "{}-{}".format(pathlib.Path.cwd().name, time.strftime("%m%d-%H%M"))
+            name = input("Name for the new session [{}]: ".format(default)).strip() or default
+            return name, False, None
+        idx = int(choice) if choice.isdigit() else 1
+        if not 1 <= idx <= len(recent):
+            idx = 1
+        return None, False, recent[idx - 1]["session_id"]
+    except (KeyboardInterrupt, EOFError):
+        print()
+        raise SystemExit(0)
 
 
 def run_gemini_pwa(args):

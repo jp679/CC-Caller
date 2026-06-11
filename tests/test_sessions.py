@@ -48,3 +48,20 @@ def test_recent_sessions_missing_dir(tmp_path, monkeypatch):
 def test_project_transcript_dir_munges_path():
     d = sessions.project_transcript_dir("/Users/JP_1/Dev/CC-Caller")
     assert d.name == "-Users-JP-1-Dev-CC-Caller"
+
+
+def test_recent_sessions_survives_vanishing_file(tmp_path, monkeypatch):
+    proj_dir = tmp_path / "p"
+    proj_dir.mkdir()
+    monkeypatch.setattr(sessions, "project_transcript_dir", lambda cwd=None: proj_dir)
+    f = _write_session(proj_dir, "33333333-3333-3333-3333-333333333333", "still here", 60)
+    ghost = proj_dir / "44444444-4444-4444-4444-444444444444.jsonl"
+    ghost.write_text("{}")
+    real_iterdir = type(proj_dir).iterdir
+    def racy_iterdir(self):
+        files = list(real_iterdir(self))
+        ghost.unlink()  # vanishes after listing, before stat
+        return iter(files)
+    monkeypatch.setattr(type(proj_dir), "iterdir", racy_iterdir)
+    result = sessions.recent_sessions(limit=5)
+    assert [s["session_id"] for s in result] == ["33333333-3333-3333-3333-333333333333"]
