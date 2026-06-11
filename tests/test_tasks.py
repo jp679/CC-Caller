@@ -14,7 +14,8 @@ def _patches():
     )
 
 
-def test_submit_runs_task_and_reports_completion():
+def test_submit_runs_task_and_reports_completion(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
     done = threading.Event()
     results = []
     p1, p2, p3, p4 = _patches()
@@ -32,7 +33,8 @@ def test_submit_runs_task_and_reports_completion():
     assert tm.pending is None
 
 
-def test_second_submit_while_busy_is_rejected():
+def test_second_submit_while_busy_is_rejected(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
     release = threading.Event()
     started = threading.Event()
 
@@ -55,7 +57,8 @@ def test_second_submit_while_busy_is_rejected():
     assert tm.busy is False
 
 
-def test_completion_callback_errors_do_not_break_manager():
+def test_completion_callback_errors_do_not_break_manager(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
     done = threading.Event()
     p1, p2, p3, p4 = _patches()
     with p1, p2, p3, p4:
@@ -70,7 +73,8 @@ def test_completion_callback_errors_do_not_break_manager():
         assert tm.submit("next task") is True
 
 
-def test_take_pending_when_empty_returns_none():
+def test_take_pending_when_empty_returns_none(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
     p1, p2, p3, p4 = _patches()
     with p1, p2, p3, p4:
         tm = TaskManager()
@@ -78,7 +82,8 @@ def test_take_pending_when_empty_returns_none():
         assert tm.pending is None
 
 
-def test_show_exchange_prints_task_and_result(capsys):
+def test_show_exchange_prints_task_and_result(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
     done = threading.Event()
     p1, p2, p3, p4 = _patches()
     with p1, p2, p3, p4:
@@ -91,7 +96,8 @@ def test_show_exchange_prints_task_and_result(capsys):
     assert "did the thing" in out
 
 
-def test_no_prints_without_show_exchange(capsys):
+def test_no_prints_without_show_exchange(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
     done = threading.Event()
     p1, p2, p3, p4 = _patches()
     with p1, p2, p3, p4:
@@ -102,14 +108,16 @@ def test_no_prints_without_show_exchange(capsys):
     assert "[task]" not in capsys.readouterr().out
 
 
-def test_explicit_session_id_overrides_name():
+def test_explicit_session_id_overrides_name(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
     p1, p2, p3, p4 = _patches()
     with p1, p2, p3, p4:
         tm = TaskManager(session_name="x", session_id="abc-123")
         assert tm.session_id == "abc-123"
 
 
-def test_switch_session_by_id_clears_context():
+def test_switch_session_by_id_clears_context(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
     p1, p2, p3, p4 = _patches()
     with p1, p2, p3, p4:
         tm = TaskManager(session_name="orig")
@@ -123,7 +131,8 @@ def test_switch_session_by_id_clears_context():
     assert tm.pending is None
 
 
-def test_switch_session_same_id_is_noop_preserving_context():
+def test_switch_session_same_id_is_noop_preserving_context(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
     p1, p2, p3, p4 = _patches()
     with p1, p2, p3, p4:
         tm = TaskManager(session_name="orig")
@@ -135,7 +144,8 @@ def test_switch_session_same_id_is_noop_preserving_context():
     assert tm.pending is not None
 
 
-def test_switch_session_by_name_uses_deterministic_uuid():
+def test_switch_session_by_name_uses_deterministic_uuid(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
     from cc_caller.claude_worker import name_to_uuid
     p1, p2, p3, p4 = _patches()
     with p1, p2, p3, p4:
@@ -145,7 +155,8 @@ def test_switch_session_by_name_uses_deterministic_uuid():
     assert tm.session_name == "myproj"
 
 
-def test_switch_session_refused_while_busy():
+def test_switch_session_refused_while_busy(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
     release = threading.Event()
     started = threading.Event()
 
@@ -164,3 +175,58 @@ def test_switch_session_refused_while_busy():
         assert tm.switch_session(session_id="other") is False
         release.set()
         assert done.wait(timeout=5)
+
+
+def test_state_survives_restart(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    from cc_caller.claude_worker import name_to_uuid
+    persist_sid = name_to_uuid("persist-test")
+    done = threading.Event()
+    p1, p2, p3, p4 = _patches()
+    # Override run_claude to return the same session_id so session_id stays stable
+    p2_stable = patch("cc_caller.tasks.run_claude",
+                      return_value=("full output", persist_sid))
+    with p1, p2_stable, p3, p4:
+        tm1 = TaskManager(session_name="persist-test")
+        tm1.on_complete = lambda r: done.set()
+        tm1.submit("build the thing")
+        assert done.wait(timeout=5)
+        sid = tm1.session_id
+    with p1, p2_stable, p3, p4:
+        tm2 = TaskManager(session_name="persist-test")
+    assert tm2.session_id == sid
+    assert tm2.history[-1]["task"] == "build the thing"
+    assert tm2.pending is not None
+    assert tm2.pending["summary"] == "did the thing"
+
+
+def test_take_pending_clears_persisted_state(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    from cc_caller.claude_worker import name_to_uuid
+    persist_sid = name_to_uuid("persist-test")
+    done = threading.Event()
+    p1, p2, p3, p4 = _patches()
+    p2_stable = patch("cc_caller.tasks.run_claude",
+                      return_value=("full output", persist_sid))
+    with p1, p2_stable, p3, p4:
+        tm1 = TaskManager(session_name="persist-test")
+        tm1.on_complete = lambda r: done.set()
+        tm1.submit("task")
+        assert done.wait(timeout=5)
+        tm1.take_pending()
+        tm2 = TaskManager(session_name="persist-test")
+    assert tm2.pending is None
+    assert tm2.history != []
+
+
+def test_switch_session_restores_target_memory(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    from cc_caller import callermem
+    callermem.save("target-session", history=[{"task": "old work", "summary": "done"}],
+                   voice_notes=["we discussed pasta"])
+    p1, p2, p3, p4 = _patches()
+    with p1, p2, p3, p4:
+        tm = TaskManager(session_name="elsewhere")
+        assert tm.switch_session(session_id="target-session") is True
+    assert tm.history == [{"task": "old work", "summary": "done"}]
+    assert tm.voice_notes == ["we discussed pasta"]

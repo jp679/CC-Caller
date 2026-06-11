@@ -3,6 +3,7 @@ import threading
 import time
 from typing import Callable, Optional
 
+from cc_caller import callermem
 from cc_caller.claude_worker import (
     clean_transcript, log_interaction, name_to_uuid, run_claude,
 )
@@ -21,13 +22,15 @@ class TaskManager:
         else:
             self.session_id = name_to_uuid(session_name)
         self.first_run = True
-        self.history = []          # [{"task", "summary"}]
-        self.pending = None        # {"task", "summary", "detail", "meta"} until consumed
         self.on_complete = None    # Callable[[dict], None], set by wiring
         self._lock = threading.Lock()
         self._state_lock = threading.Lock()  # guards pending + history (NOT _lock: held for task duration)
         self._started_at = None
         self.current_task = None
+        state = callermem.load(self.session_id)
+        self.history = state["history"]      # [{"task", "summary"}]
+        self.pending = state["pending"]      # {"task", "summary", "detail", "meta"} until consumed
+        self.voice_notes = state["voice_notes"]
 
     @property
     def busy(self):
@@ -53,12 +56,13 @@ class TaskManager:
     def take_pending(self):
         with self._state_lock:
             result, self.pending = self.pending, None
-            return result
+            self._persist()
+        return result
 
     def switch_session(self, session_id=None, session_name=None):
         """Rebind to another Claude session. Refused (False) while a task runs.
-        Same-session is a no-op; a real switch clears history/pending, which
-        belong to the previous conversation."""
+        Same-session is a no-op; a real switch restores the target session's
+        caller memory (history, pending, voice_notes) from disk."""
         if not self._lock.acquire(blocking=False):
             return False
         try:
@@ -72,12 +76,21 @@ class TaskManager:
             self.session_id = new_id
             self.session_name = new_name
             self.first_run = True
+            state = callermem.load(new_id)
             with self._state_lock:
-                self.history = []
-                self.pending = None
+                self.history = state["history"]
+                self.pending = state["pending"]
+                self.voice_notes = state["voice_notes"]
             return True
         finally:
             self._lock.release()
+
+    def _persist(self):
+        try:
+            callermem.save(self.session_id, history=self.history,
+                           pending=self.pending, voice_notes=self.voice_notes)
+        except Exception as e:
+            print("[tasks] persist failed: {}".format(e))
 
     def _run(self, task, meta):
         t0 = time.time()
@@ -99,6 +112,7 @@ class TaskManager:
                 self.history.append({"task": task, "summary": summary})
                 del self.history[:-50]   # bound growth; consumers read history[-5:]
                 self.pending = result
+                self._persist()
         except Exception as e:
             if self.show_exchange:
                 print("[task] FAILED: {}".format(e))
@@ -106,6 +120,7 @@ class TaskManager:
                       "detail": str(e), "meta": meta}
             with self._state_lock:
                 self.pending = result
+                self._persist()
         finally:
             self._started_at = None
             self.current_task = None
