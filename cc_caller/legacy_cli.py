@@ -1,7 +1,6 @@
 import argparse
 import os
 import queue
-import sys
 import threading
 import time
 import uuid
@@ -17,7 +16,6 @@ from cc_caller.vapi.client import (
     configure_inbound_number,
     clear_inbound_number,
     create_call,
-    create_web_call,
 )
 from cc_caller.vapi.webhook import create_app
 
