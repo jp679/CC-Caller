@@ -13,10 +13,15 @@ class StubTM:
         self.pending = None
         self.busy = False
         self.elapsed = None
+        self.session_id = None
+        self.session_name = "caller"
 
     def take_pending(self):
         p, self.pending = self.pending, None
         return p
+
+    def switch_session(self, **kwargs):
+        return True
 
 
 def make_state(tmp_path, monkeypatch):
@@ -166,3 +171,75 @@ def test_index_links_tokened_manifest_when_presented(tmp_path, monkeypatch):
     resp = client.get("/")
     assert 'href="/manifest.json"' in resp.text
     assert "sekrit" not in resp.text
+
+
+def test_api_sessions_token_gated_and_shaped(tmp_path, monkeypatch):
+    state = make_state(tmp_path, monkeypatch)
+    state.task_manager.session_id = "deadbeef-0000-0000-0000-000000000000"
+    state.task_manager.session_name = "caller"
+    fake = [{"session_id": "aaa", "label": "fix auth", "age": "5m ago"}]
+    import cc_caller.server as server_mod
+    monkeypatch.setattr(server_mod.sessions, "recent_sessions", lambda limit=5: fake)
+    client = TestClient(create_app(state))
+    assert client.get("/api/sessions").status_code == 401
+    resp = client.get("/api/sessions?token=sekrit")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sessions"] == fake
+    assert data["current"]["id"] == "deadbeef-0000-0000-0000-000000000000"
+    assert data["current"]["name"] == "caller"
+
+
+def test_ws_session_param_switches_before_session_build(tmp_path, monkeypatch):
+    state = make_state(tmp_path, monkeypatch)
+    calls = []
+    state.task_manager.switch_session = lambda **kw: (calls.append(kw), True)[1]
+
+    class StubSession:
+        def __init__(self, **kwargs):
+            pass
+
+        async def run(self, browser_messages):
+            return
+
+    import cc_caller.server as server_mod
+    monkeypatch.setattr(server_mod, "GeminiLiveSession", StubSession)
+    client = TestClient(create_app(state))
+    try:
+        with client.websocket_connect("/ws?token=sekrit&session=id:abc-123"):
+            pass
+    except WebSocketDisconnect:
+        pass
+    assert calls == [{"session_id": "abc-123"}]
+
+    calls.clear()
+    try:
+        with client.websocket_connect("/ws?token=sekrit&session=name:myproj"):
+            pass
+    except WebSocketDisconnect:
+        pass
+    assert calls == [{"session_name": "myproj"}]
+
+
+def test_ws_session_switch_refused_sends_error_frame(tmp_path, monkeypatch):
+    state = make_state(tmp_path, monkeypatch)
+    state.task_manager.switch_session = lambda **kw: False
+
+    class StubSession:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def run(self, browser_messages):
+            await self.kwargs["send_to_browser"]({"type": "ready", "asyncTools": True})
+            async for _ in browser_messages:
+                return
+
+    import cc_caller.server as server_mod
+    monkeypatch.setattr(server_mod, "GeminiLiveSession", StubSession)
+    client = TestClient(create_app(state))
+    with client.websocket_connect("/ws?token=sekrit&session=id:abc") as ws:
+        first = ws.receive_json()
+        assert first["type"] == "error"
+        assert "task is still running" in first["message"]
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"type": "end"})

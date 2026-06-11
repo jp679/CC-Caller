@@ -55,6 +55,30 @@ class TaskManager:
             result, self.pending = self.pending, None
             return result
 
+    def switch_session(self, session_id=None, session_name=None):
+        """Rebind to another Claude session. Refused (False) while a task runs.
+        Same-session is a no-op; a real switch clears history/pending, which
+        belong to the previous conversation."""
+        if not self._lock.acquire(blocking=False):
+            return False
+        try:
+            if session_id:
+                new_id, new_name = session_id, None
+            else:
+                name = session_name or "caller"
+                new_id, new_name = name_to_uuid(name), name
+            if new_id == self.session_id:
+                return True
+            self.session_id = new_id
+            self.session_name = new_name
+            self.first_run = True
+            with self._state_lock:
+                self.history = []
+                self.pending = None
+            return True
+        finally:
+            self._lock.release()
+
     def _run(self, task, meta):
         t0 = time.time()
         try:

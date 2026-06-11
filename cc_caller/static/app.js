@@ -6,6 +6,8 @@ const TOKEN = localStorage.getItem('cc_token') || '';
 const $ = (id) => document.getElementById(id);
 let ws = null, micCtx = null, micStream = null, spkCtx = null;
 let playHead = 0, wakeLock = null, elapsedTimer = null, workingSince = null;
+let chosenSession = null;
+let autoConnected = qs.get('callback') === '1';
 
 function setStatus(text, cls) {
   const el = $('status');
@@ -114,15 +116,76 @@ async function setupPush() {
   } catch (e) { console.log('[push]', e); }
 }
 
+async function loadSessions() {
+  if (!TOKEN || ws) return;
+  try {
+    const r = await fetch('/api/sessions?token=' + TOKEN);
+    if (!r.ok) return;
+    renderSessions(await r.json());
+  } catch (e) {}
+}
+
+function renderSessions(data) {
+  const box = $('sessions');
+  box.innerHTML = '';
+  const addRow = (label, age, onPick, isActive) => {
+    const row = document.createElement('div');
+    row.className = 'sess' + (isActive ? ' active' : '');
+    const a = document.createElement('span');
+    a.className = 'age';
+    a.textContent = age;
+    const l = document.createElement('span');
+    l.textContent = label;
+    row.appendChild(a);
+    row.appendChild(l);
+    row.onclick = () => {
+      onPick(row);
+      box.querySelectorAll('.sess').forEach(el => el.classList.remove('active'));
+      row.classList.add('active');
+    };
+    box.appendChild(row);
+    return row;
+  };
+  addRow('Current session' + (data.current.name ? ' — ' + data.current.name : ''), '',
+    () => { chosenSession = null; }, true);
+  (data.sessions || []).forEach(s => {
+    if (s.session_id === data.current.id) return;
+    addRow(s.label, s.age, () => { chosenSession = { kind: 'id', value: s.session_id }; }, false);
+  });
+  addRow('＋ New session', '', (row) => {
+    if (row.querySelector('input')) return;
+    const input = document.createElement('input');
+    input.placeholder = 'name (optional)';
+    input.onclick = (e) => e.stopPropagation();
+    input.oninput = () => {
+      chosenSession = { kind: 'name', value: input.value.trim() || defaultSessionName() };
+    };
+    row.appendChild(input);
+    chosenSession = { kind: 'name', value: defaultSessionName() };
+  }, false);
+  box.classList.remove('hidden');
+}
+
+function defaultSessionName() {
+  const d = new Date();
+  return 'session-' + (d.getMonth() + 1) + '-' + d.getDate() + '-' + d.getHours() + d.getMinutes();
+}
+
+function sessionParam() {
+  if (!chosenSession || !chosenSession.value) return '';
+  return '&session=' + encodeURIComponent(chosenSession.kind + ':' + chosenSession.value);
+}
+
 async function connect() {
   setupPush();
   setStatus('connecting…', 'idle');
   const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  ws = new WebSocket(proto + location.host + '/ws?token=' + TOKEN);
+  ws = new WebSocket(proto + location.host + '/ws?token=' + TOKEN + (autoConnected ? '' : sessionParam()));
   ws.onmessage = async (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'ready') {
       setStatus('live', 'live');
+      $('sessions').classList.add('hidden');
       $('connect').textContent = 'Hang up';
       $('connect').classList.add('connected');
       await startMic();
@@ -137,6 +200,7 @@ async function connect() {
     else if (msg.type === 'error') addCaption('agent', '⚠ ' + msg.message);
   };
   ws.onclose = () => disconnect(true);
+  autoConnected = false;
 }
 
 function disconnect(remote) {
@@ -155,7 +219,9 @@ function disconnect(remote) {
   $('connect').textContent = 'Connect';
   $('connect').classList.remove('connected');
   setStatus('disconnected', 'idle');
+  loadSessions();
 }
 
 $('connect').onclick = () => (ws ? disconnect() : connect());
 if (qs.get('callback') === '1') connect();
+loadSessions();

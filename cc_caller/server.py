@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from cc_caller import push
+from cc_caller import push, sessions
 from cc_caller.gemini_live import GeminiLiveSession
 
 STATIC_DIR = pathlib.Path(__file__).resolve().parent / "static"
@@ -85,6 +85,15 @@ def create_app(state):
         require_token(request)
         return {"vapidPublicKey": state.vapid_public_key}
 
+    @app.get("/api/sessions")
+    async def api_sessions(request: Request):
+        require_token(request)
+        tm = state.task_manager
+        return {
+            "current": {"id": tm.session_id, "name": tm.session_name},
+            "sessions": sessions.recent_sessions(limit=5),
+        }
+
     @app.post("/api/push-subscribe")
     async def push_subscribe(request: Request):
         require_token(request)
@@ -101,6 +110,19 @@ def create_app(state):
             return
         await websocket.accept()
 
+        switch_note = None
+        requested = websocket.query_params.get("session", "")
+        if requested:
+            if requested.startswith("id:"):
+                ok = state.task_manager.switch_session(session_id=requested[3:])
+            elif requested.startswith("name:"):
+                ok = state.task_manager.switch_session(session_name=requested[5:])
+            else:
+                ok = False
+            if not ok:
+                switch_note = ("Could not switch session — a task is still running. "
+                               "Connected to the current session instead.")
+
         session = GeminiLiveSession(
             api_key=state.api_key,
             system_prompt=build_system_prompt(state),
@@ -111,6 +133,12 @@ def create_app(state):
             show_exchange=state.show_exchange,
         )
         state.session_holder["session"] = session
+
+        if switch_note:
+            try:
+                await websocket.send_json({"type": "error", "message": switch_note})
+            except Exception:
+                pass
 
         async def browser_messages():
             try:

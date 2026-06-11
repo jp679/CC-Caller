@@ -30,3 +30,16 @@ button.connected { background: #7f1d1d; color: #fecaca; }
   border-left: 3px solid #334155; white-space: pre-wrap;
 }
 .xchg.result { border-left-color: #22c55e; }
+#sessions { display: flex; flex-direction: column; gap: 6px; max-height: 38dvh; overflow-y: auto; }
+#sessions.hidden { display: none; }
+.sess {
+  padding: 10px 12px; border-radius: 10px; background: #161616;
+  border: 1px solid #262626; font-size: 13.5px; color: #d4d4d4;
+  display: flex; gap: 10px; align-items: baseline;
+}
+.sess .age { color: #6b7280; font-size: 11.5px; flex-shrink: 0; min-width: 52px; }
+.sess.active { border-color: #22c55e; background: #07150c; }
+.sess input {
+  flex: 1; background: #0a0a0a; border: 1px solid #333; border-radius: 6px;
+  color: #e5e5e5; padding: 6px 8px; font-size: 13px;
+}

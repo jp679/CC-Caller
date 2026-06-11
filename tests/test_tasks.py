@@ -107,3 +107,60 @@ def test_explicit_session_id_overrides_name():
     with p1, p2, p3, p4:
         tm = TaskManager(session_name="x", session_id="abc-123")
         assert tm.session_id == "abc-123"
+
+
+def test_switch_session_by_id_clears_context():
+    p1, p2, p3, p4 = _patches()
+    with p1, p2, p3, p4:
+        tm = TaskManager(session_name="orig")
+        tm.history.append({"task": "t", "summary": "s"})
+        tm.pending = {"task": "t", "summary": "s", "detail": "", "meta": {}}
+        assert tm.switch_session(session_id="abc-123") is True
+    assert tm.session_id == "abc-123"
+    assert tm.session_name is None
+    assert tm.first_run is True
+    assert tm.history == []
+    assert tm.pending is None
+
+
+def test_switch_session_same_id_is_noop_preserving_context():
+    p1, p2, p3, p4 = _patches()
+    with p1, p2, p3, p4:
+        tm = TaskManager(session_name="orig")
+        tm.history.append({"task": "t", "summary": "s"})
+        tm.pending = {"task": "t", "summary": "s", "detail": "", "meta": {}}
+        same = tm.session_id
+        assert tm.switch_session(session_id=same) is True
+    assert tm.history != []
+    assert tm.pending is not None
+
+
+def test_switch_session_by_name_uses_deterministic_uuid():
+    from cc_caller.claude_worker import name_to_uuid
+    p1, p2, p3, p4 = _patches()
+    with p1, p2, p3, p4:
+        tm = TaskManager()
+        assert tm.switch_session(session_name="myproj") is True
+    assert tm.session_id == name_to_uuid("myproj")
+    assert tm.session_name == "myproj"
+
+
+def test_switch_session_refused_while_busy():
+    release = threading.Event()
+    started = threading.Event()
+
+    def slow_run(*a, **kw):
+        started.set()
+        release.wait(timeout=5)
+        return ("out", "sid")
+
+    p1, p2, p3, p4 = _patches()
+    with p1, patch("cc_caller.tasks.run_claude", side_effect=slow_run), p3, p4:
+        tm = TaskManager()
+        done = threading.Event()
+        tm.on_complete = lambda r: done.set()
+        tm.submit("task")
+        assert started.wait(timeout=5)
+        assert tm.switch_session(session_id="other") is False
+        release.set()
+        assert done.wait(timeout=5)
