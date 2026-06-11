@@ -26,6 +26,12 @@ def load_config() -> None:
 
 def save_config_values(**values) -> None:
     """Set keys in the config-dir .env, replacing existing lines for those keys."""
+    cleaned = {}
+    for key, val in values.items():
+        sval = str(val)
+        if "\n" in sval or "\r" in sval:
+            raise ValueError("config values must not contain newlines")
+        cleaned[key] = sval.strip()
     cfg = config_dir()
     cfg.mkdir(parents=True, exist_ok=True)
     env_file = cfg / ".env"
@@ -33,10 +39,21 @@ def save_config_values(**values) -> None:
     if env_file.exists():
         lines = [
             ln for ln in env_file.read_text().splitlines()
-            if ln.strip() and ln.split("=", 1)[0] not in values
+            if ln.strip() and ln.split("=", 1)[0] not in cleaned
         ]
-    for key, val in values.items():
-        lines.append("{}={}".format(key, val))
-        os.environ[key] = str(val)
-    env_file.write_text("\n".join(lines) + "\n")
-    os.chmod(env_file, 0o600)
+    for key, val in cleaned.items():
+        # Double-quote so dotenv preserves inline '#' etc. on read.
+        escaped = val.replace("\\", "\\\\").replace('"', '\\"')
+        lines.append('{}="{}"'.format(key, escaped))
+        os.environ[key] = val
+    # Atomic write, created 0600 from the start (no world-readable window).
+    tmp = env_file.parent / (env_file.name + ".tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+        os.replace(str(tmp), str(env_file))
+    except BaseException:
+        if tmp.exists():
+            tmp.unlink()
+        raise

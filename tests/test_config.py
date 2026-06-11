@@ -1,4 +1,7 @@
 import os
+
+import pytest
+
 from cc_caller import config
 
 
@@ -28,7 +31,8 @@ def test_save_config_values_creates_file_with_0600(monkeypatch, tmp_path):
     monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(cfg))
     config.save_config_values(GEMINI_API_KEY="abc123")
     env_file = cfg / ".env"
-    assert "GEMINI_API_KEY=abc123" in env_file.read_text()
+    # Raw-content check: values are written double-quoted.
+    assert 'GEMINI_API_KEY="abc123"' in env_file.read_text()
     assert oct(env_file.stat().st_mode)[-3:] == "600"
 
 
@@ -38,6 +42,23 @@ def test_save_config_values_replaces_existing_key(monkeypatch, tmp_path):
     config.save_config_values(GEMINI_API_KEY="old", NTFY_TOPIC="t")
     config.save_config_values(GEMINI_API_KEY="new")
     text = (cfg / ".env").read_text()
-    assert "GEMINI_API_KEY=new" in text
-    assert "GEMINI_API_KEY=old" not in text
-    assert "NTFY_TOPIC=t" in text
+    assert 'GEMINI_API_KEY="new"' in text
+    assert "old" not in text
+    assert 'NTFY_TOPIC="t"' in text
+
+
+def test_saved_value_with_special_chars_roundtrips(monkeypatch, tmp_path):
+    cfg = tmp_path / "cfg"
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(cfg))
+    monkeypatch.delenv("CC_RT_VAL", raising=False)
+    config.save_config_values(CC_RT_VAL="ab=cd #ef gh")
+    del os.environ["CC_RT_VAL"]
+    monkeypatch.chdir(tmp_path)  # no cwd .env here
+    config.load_config()
+    assert os.environ["CC_RT_VAL"] == "ab=cd #ef gh"
+
+
+def test_save_rejects_newlines(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path / "cfg"))
+    with pytest.raises(ValueError):
+        config.save_config_values(GEMINI_API_KEY="a\nINJECTED=evil")
