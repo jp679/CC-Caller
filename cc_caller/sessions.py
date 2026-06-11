@@ -8,12 +8,18 @@ import time
 _SESSION_FILE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$")
 
-UTILITY_PREFIXES = (
-    "You are a transcript cleaner",
-    "Summarize this coding assistant output",
-    "Read this output and answer",
-    "Read this transcript from a phone call",
-)
+def _utility_prefixes():
+    """Derived from the source prompt constants so the filter can't drift
+    from the real prompts (lazy import avoids cycles)."""
+    from cc_caller.claude_worker import (CLEAN_TRANSCRIPT_PROMPT, NEED_INPUT_PROMPT,
+                                         TERMINATION_CHECK_PROMPT)
+    from cc_caller.summarizer import CONVERSATION_PROMPT, SUMMARIZE_PROMPT
+    return tuple(p[:40] for p in (CLEAN_TRANSCRIPT_PROMPT, NEED_INPUT_PROMPT,
+                                  TERMINATION_CHECK_PROMPT, CONVERSATION_PROMPT,
+                                  SUMMARIZE_PROMPT))
+
+
+UTILITY_PREFIXES = _utility_prefixes()
 
 
 def project_transcript_dir(cwd=None):

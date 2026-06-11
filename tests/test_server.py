@@ -290,6 +290,36 @@ def test_ws_builds_opener_from_pending(tmp_path, monkeypatch):
     assert captured["opening"] is None
 
 
+def test_ws_suppresses_pending_block_when_opener_carries_it(tmp_path, monkeypatch):
+    state = make_state(tmp_path, monkeypatch)
+    state.task_manager.pending = {"task": "t", "summary": "the tests now pass",
+                                  "detail": "", "meta": {}}
+    captured = {}
+
+    class StubSession:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def run(self, browser_messages):
+            return
+
+    import cc_caller.server as server_mod
+    monkeypatch.setattr(server_mod, "GeminiLiveSession", StubSession)
+    client = TestClient(create_app(state))
+    try:
+        with client.websocket_connect("/ws?token=sekrit"):
+            pass
+    except WebSocketDisconnect:
+        pass
+    assert "the tests now pass" in captured["opening"]
+    assert "PENDING RESULT" not in captured["system_prompt"]
+
+    # without an opener the prompt still carries the pending block
+    prompt = build_system_prompt(state)
+    assert "PENDING RESULT" in prompt
+    assert "PENDING RESULT" not in build_system_prompt(state, suppress_pending=True)
+
+
 def test_system_prompt_includes_voice_notes(tmp_path, monkeypatch):
     state = make_state(tmp_path, monkeypatch)
     state.task_manager.voice_notes = ["2026-06-12 01:00 -- discussed pasta recipe"]

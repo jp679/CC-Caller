@@ -131,13 +131,16 @@ class GeminiLiveSession:
         await self.send_to_browser({"type": "ready", "asyncTools": self.async_tools,
                                     "session": {"id": getattr(self.tm, "session_id", None),
                                                 "name": getattr(self.tm, "session_name", None)}})
-        if self.on_ready:
-            self.on_ready()
+        # Opener goes on the wire BEFORE on_ready: on_ready consumes (and
+        # persists away) the pending result, so a drop before the send must
+        # leave pending intact for the next connection.
         if self.opening:
             await self._ws.send(json.dumps({"clientContent": {
                 "turns": [{"role": "user", "parts": [{"text": self.opening}]}],
                 "turnComplete": True,
             }}))
+        if self.on_ready:
+            self.on_ready()
         browser_task = asyncio.ensure_future(self._pump_browser(browser_messages))
         gemini_task = asyncio.ensure_future(self._pump_gemini())
         try:

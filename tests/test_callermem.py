@@ -67,3 +67,56 @@ def test_rejects_path_traversal_ids(monkeypatch, tmp_path):
             callermem.load(bad)
         with pytest.raises(ValueError):
             callermem.save(bad, history=[])
+
+
+def test_rejects_empty_and_whitespace_ids(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    for bad in ("", "   ", "\t"):
+        with pytest.raises(ValueError):
+            callermem.load(bad)
+        with pytest.raises(ValueError):
+            callermem.save(bad, history=[])
+
+
+def test_concurrent_save_and_append_no_field_loss(monkeypatch, tmp_path):
+    """Distiller's append_voice_note racing _persist must not clobber fields:
+    save() owns history/pending, append owns voice_notes; the write lock
+    serializes overlay writes so neither loses the other's last value."""
+    import threading
+
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    errors = []
+
+    def saver():
+        try:
+            for i in range(200):
+                callermem.save("abc-123",
+                               history=[{"task": "t{}".format(i), "summary": "s"}],
+                               pending={"task": "t{}".format(i),
+                                        "summary": "p{}".format(i),
+                                        "detail": "", "meta": {}})
+        except Exception as e:
+            errors.append(e)
+
+    def appender():
+        try:
+            for i in range(200):
+                callermem.append_voice_note("abc-123", "note {}".format(i))
+        except Exception as e:
+            errors.append(e)
+
+    t1 = threading.Thread(target=saver)
+    t2 = threading.Thread(target=appender)
+    t1.start()
+    t2.start()
+    t1.join(timeout=30)
+    t2.join(timeout=30)
+    assert not t1.is_alive() and not t2.is_alive()
+    assert errors == []
+
+    state = callermem.load("abc-123")
+    # the LAST save's fields survive the interleaved appends
+    assert state["pending"]["summary"] == "p199"
+    assert state["history"] == [{"task": "t199", "summary": "s"}]
+    # ALL appended notes survive (capped to the last 10)
+    assert state["voice_notes"] == ["note {}".format(i) for i in range(190, 200)]

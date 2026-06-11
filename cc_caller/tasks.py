@@ -56,7 +56,8 @@ class TaskManager:
     def take_pending(self):
         with self._state_lock:
             result, self.pending = self.pending, None
-            self._persist()
+            hist = list(self.history)
+        self._persist(hist, None)
         return result
 
     def switch_session(self, session_id=None, session_name=None):
@@ -85,10 +86,12 @@ class TaskManager:
         finally:
             self._lock.release()
 
-    def _persist(self):
+    def _persist(self, history, pending):
+        """Write history/pending only -- voice_notes belongs to the distiller
+        (callermem.save preserves unprovided fields). Called OUTSIDE
+        _state_lock with copies so the file op never holds the lock."""
         try:
-            callermem.save(self.session_id, history=self.history,
-                           pending=self.pending, voice_notes=self.voice_notes)
+            callermem.save(self.session_id, history=history, pending=pending)
         except Exception as e:
             print("[tasks] persist failed: {}".format(e))
 
@@ -112,7 +115,8 @@ class TaskManager:
                 self.history.append({"task": task, "summary": summary})
                 del self.history[:-50]   # bound growth; consumers read history[-5:]
                 self.pending = result
-                self._persist()
+                hist, pend = list(self.history), self.pending
+            self._persist(hist, pend)
         except Exception as e:
             if self.show_exchange:
                 print("[task] FAILED: {}".format(e))
@@ -120,7 +124,8 @@ class TaskManager:
                       "detail": str(e), "meta": meta}
             with self._state_lock:
                 self.pending = result
-                self._persist()
+                hist, pend = list(self.history), self.pending
+            self._persist(hist, pend)
         finally:
             self._started_at = None
             self.current_task = None

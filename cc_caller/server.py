@@ -28,8 +28,10 @@ class AppState:
         self.session_holder = {"session": None}
 
 
-def build_system_prompt(state, resumed=None):
-    """Base relay prompt + recent history + any pending (undelivered) result."""
+def build_system_prompt(state, resumed=None, suppress_pending=False):
+    """Base relay prompt + recent history + any pending (undelivered) result.
+    suppress_pending: skip the PENDING block when the opener already carries
+    the result, so the agent doesn't report it twice."""
     prompt = state.base_system_prompt
     if state.task_manager.history:
         prompt += ("\n\nRECENT CONVERSATION (results you already reported -- use these to "
@@ -46,7 +48,7 @@ def build_system_prompt(state, resumed=None):
                 break
             block += line
         prompt += block
-    if state.task_manager.pending:
+    if state.task_manager.pending and not suppress_pending:
         prompt += ("\n\nPENDING RESULT -- the user has not heard this yet. Open the "
                    "conversation by telling them: {}\n".format(
                        state.task_manager.pending["summary"]))
@@ -178,7 +180,8 @@ def create_app(state):
 
         session = GeminiLiveSession(
             api_key=state.api_key,
-            system_prompt=build_system_prompt(state, resumed=resumed),
+            system_prompt=build_system_prompt(state, resumed=resumed,
+                                              suppress_pending=bool(opening)),
             task_manager=state.task_manager,
             send_to_browser=websocket.send_json,
             model=state.model,
