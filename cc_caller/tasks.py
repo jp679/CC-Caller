@@ -1,4 +1,5 @@
 """Serialized Claude task execution with completion callbacks and pending results."""
+import os
 import threading
 import time
 from typing import Callable, Optional
@@ -27,6 +28,8 @@ class TaskManager:
         self._state_lock = threading.Lock()  # guards pending + history (NOT _lock: held for task duration)
         self._started_at = None
         self.current_task = None
+        self.current_activity = None
+        self.workdir = os.getcwd()
         state = callermem.load(self.session_id)
         self.history = state["history"]      # [{"task", "summary"}]
         self.pending = state["pending"]      # {"task", "summary", "detail", "meta"} until consumed
@@ -95,6 +98,11 @@ class TaskManager:
         except Exception as e:
             print("[tasks] persist failed: {}".format(e))
 
+    def _set_activity(self, text):
+        self.current_activity = text
+        if self.show_exchange:
+            print("[task] ~ {}".format(text))
+
     def _run(self, task, meta):
         t0 = time.time()
         try:
@@ -104,6 +112,7 @@ class TaskManager:
             output, self.session_id = run_claude(
                 cleaned, self.session_id,
                 session_name=self.session_name, is_first_run=self.first_run,
+                on_activity=self._set_activity, cwd=self.workdir,
             )
             self.first_run = False
             summary = summarize_output(output)["summary"]
@@ -129,6 +138,7 @@ class TaskManager:
         finally:
             self._started_at = None
             self.current_task = None
+            self.current_activity = None
             self._lock.release()
         if self.on_complete:
             try:
