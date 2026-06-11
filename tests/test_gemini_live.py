@@ -1,0 +1,200 @@
+import asyncio
+import threading
+
+import pytest
+
+from cc_caller.gemini_live import GeminiLiveSession
+from tests.fake_gemini import FakeGemini
+
+
+class StubTM:
+    def __init__(self, accept=True):
+        self.accept = accept
+        self.submitted = []
+        self.busy = False
+        self.elapsed = None
+
+    def submit(self, task, meta=None):
+        self.submitted.append((task, meta))
+        return self.accept
+
+
+class Harness:
+    def __init__(self, fake, tm):
+        self.to_browser = []
+        self.queue = asyncio.Queue()
+        self.session = GeminiLiveSession(
+            api_key="test-key", system_prompt="PROMPT", task_manager=tm,
+            send_to_browser=self._send, ws_url=fake.url,
+        )
+        self.run_task = None
+
+    async def _send(self, msg):
+        self.to_browser.append(msg)
+
+    async def _browser_messages(self):
+        while True:
+            msg = await self.queue.get()
+            if msg is None:
+                return
+            yield msg
+
+    def start(self):
+        self.run_task = asyncio.ensure_future(self.session.run(self._browser_messages()))
+
+    async def stop(self):
+        await self.queue.put(None)
+        try:
+            await asyncio.wait_for(self.run_task, timeout=3)
+        except asyncio.TimeoutError:
+            self.run_task.cancel()
+
+
+async def wait_until(cond, timeout=3.0):
+    deadline = asyncio.get_event_loop().time() + timeout
+    while not cond():
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError("condition not met in {}s".format(timeout))
+        await asyncio.sleep(0.02)
+
+
+async def test_handshake_declares_non_blocking_tools():
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        setup = fake.received_of("setup")[0]["setup"]
+        decls = setup["tools"][0]["functionDeclarations"]
+        names = [d["name"] for d in decls]
+        assert names == ["askCodingAgent", "checkStatus", "endSession"]
+        assert decls[0]["behavior"] == "NON_BLOCKING"
+        assert setup["systemInstruction"]["parts"][0]["text"] == "PROMPT"
+        assert h.session.async_tools is True
+        await h.stop()
+
+
+async def test_fallback_when_non_blocking_rejected():
+    async with FakeGemini(reject_non_blocking=True) as fake:
+        h = Harness(fake, StubTM())
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        assert fake.setup_count == 2
+        second = fake.received_of("setup")[1]["setup"]
+        assert "behavior" not in second["tools"][0]["functionDeclarations"][0]
+        assert h.session.async_tools is False
+        await h.stop()
+
+
+async def test_browser_audio_forwarded_to_gemini():
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await h.queue.put({"type": "audio", "data": "QUJD"})
+        await wait_until(lambda: fake.received_of("realtimeInput"))
+        ri = fake.received_of("realtimeInput")[0]["realtimeInput"]
+        assert ri["audio"]["data"] == "QUJD"
+        assert ri["audio"]["mimeType"] == "audio/pcm;rate=16000"
+        await h.stop()
+
+
+async def test_gemini_audio_and_captions_forwarded_to_browser():
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"serverContent": {
+            "inputTranscription": {"text": "hello"},
+            "modelTurn": {"parts": [{"inlineData": {"data": "UENN"}}]},
+        }})
+        await wait_until(lambda: any(m.get("type") == "audio" for m in h.to_browser))
+        assert {"type": "caption", "role": "user", "text": "hello"} in h.to_browser
+        assert {"type": "audio", "data": "UENN"} in h.to_browser
+        await h.stop()
+
+
+async def test_tool_call_acks_interim_then_delivers_interrupt():
+    tm = StubTM(accept=True)
+    async with FakeGemini() as fake:
+        h = Harness(fake, tm)
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "f1", "name": "askCodingAgent", "args": {"task": "fix the bug"}}
+        ]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        assert tm.submitted == [("fix the bug", {"fc_id": "f1"})]
+        interim = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        assert interim["id"] == "f1"
+        assert interim["willContinue"] is True
+        assert interim["response"]["status"] == "started"
+        assert any(m.get("type") == "status" and m.get("state") == "working"
+                   for m in h.to_browser)
+
+        # deliver from a foreign thread, like the worker does
+        ok = await asyncio.get_event_loop().run_in_executor(
+            None, h.session.deliver_result, "all fixed")
+        assert ok is True
+        await wait_until(lambda: len(fake.received_of("toolResponse")) >= 2)
+        final = fake.received_of("toolResponse")[1]["toolResponse"]["functionResponses"][0]
+        assert final["id"] == "f1"
+        assert final["scheduling"] == "INTERRUPT"
+        assert final["response"]["result"] == "all fixed"
+        await h.stop()
+
+
+async def test_busy_manager_returns_busy_response():
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM(accept=False))
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "f9", "name": "askCodingAgent", "args": {"task": "another"}}
+        ]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        resp = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        assert resp["response"]["status"] == "busy"
+        assert "willContinue" not in resp
+        await h.stop()
+
+
+async def test_cancellation_falls_back_to_client_content():
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "f1", "name": "askCodingAgent", "args": {"task": "t"}}
+        ]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        await fake.send({"toolCallCancellation": {"ids": ["f1"]}})
+        await wait_until(lambda: "f1" in h.session._cancelled)
+        ok = await asyncio.get_event_loop().run_in_executor(
+            None, h.session.deliver_result, "late result")
+        assert ok is True
+        await wait_until(lambda: fake.received_of("clientContent"))
+        turn = fake.received_of("clientContent")[0]["clientContent"]["turns"][0]
+        assert "late result" in turn["parts"][0]["text"]
+        await h.stop()
+
+
+async def test_check_status_and_end_session():
+    tm = StubTM()
+    tm.busy, tm.elapsed = True, 42.5
+    async with FakeGemini() as fake:
+        h = Harness(fake, tm)
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "s1", "name": "checkStatus", "args": {}}]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        status = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        assert status["response"] == {"working": True, "elapsedSeconds": 42}
+
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "e1", "name": "endSession", "args": {}}]}})
+        await wait_until(lambda: len(fake.received_of("toolResponse")) >= 2)
+        await fake.send({"serverContent": {"turnComplete": True}})
+        await asyncio.wait_for(h.run_task, timeout=3)
+        assert h.session.alive is False
+        assert h.session.ended is True
