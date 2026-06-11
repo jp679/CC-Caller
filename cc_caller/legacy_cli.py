@@ -1,7 +1,6 @@
 import argparse
 import os
 import queue
-import subprocess
 import sys
 import threading
 import time
@@ -9,13 +8,10 @@ import uuid
 from enum import Enum
 from typing import Optional
 
-import re
-
 import uvicorn
 from dotenv import load_dotenv
 
 from cc_caller.summarizer import summarize_output
-import requests as http_requests
 from cc_caller.vapi.client import (
     build_assistant_config,
     build_inbound_assistant_config,
@@ -33,6 +29,9 @@ from cc_caller.claude_worker import (
     name_to_uuid, run_claude, clean_transcript, check_needs_input,
     is_termination, log_interaction,
 )
+from cc_caller.push import ensure_vapid_keys, send_web_push
+from cc_caller.notify import send_notification
+from cc_caller.tunnel import start_tunnel
 
 
 class CallMode(Enum):
@@ -61,98 +60,6 @@ def should_call(
 
     return True
 
-
-def send_notification(title: str, message: str, url: str = "") -> None:
-    ntfy_topic = os.getenv("NTFY_TOPIC", "cc-caller")
-    headers = {"Title": title, "Priority": "urgent", "Tags": "phone"}
-    if url:
-        headers["Click"] = url
-        headers["Actions"] = f"view, Open Call, {url}"
-    try:
-        http_requests.post(
-            f"https://ntfy.sh/{ntfy_topic}",
-            data=message,
-            headers=headers,
-            timeout=5,
-        )
-    except Exception as e:
-        print(f"Notification failed: {e}")
-
-
-def start_tunnel(port: int, method: str) -> tuple:
-    """Start a tunnel and return (public_url, cleanup_fn)."""
-    if method == "cloudflare":
-        proc = subprocess.Popen(
-            ["cloudflared", "tunnel", "--url", f"http://localhost:{port}"],
-            stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
-        )
-        start = time.time()
-        while time.time() - start < 15:
-            line = proc.stderr.readline()
-            m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
-            if m:
-                url = m.group(0)
-                return url, lambda: proc.terminate()
-        proc.terminate()
-        raise RuntimeError("Cloudflare tunnel failed to start")
-    else:
-        from pyngrok import ngrok
-        domain = os.getenv("NGROK_DOMAIN", "")
-        kwargs = {"addr": port, "proto": "http"}
-        if domain:
-            kwargs["domain"] = domain
-        tunnel = ngrok.connect(**kwargs)
-        url = tunnel.public_url
-        return url, lambda: ngrok.disconnect(url)
-
-
-def ensure_vapid_keys() -> tuple:
-    """Return (private_key, public_key) in base64url format. Generate and save if missing."""
-    priv = os.getenv("VAPID_PRIVATE_KEY", "")
-    pub = os.getenv("VAPID_PUBLIC_KEY", "")
-    if priv and pub:
-        return priv, pub
-
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives import serialization
-    import base64
-
-    key = ec.generate_private_key(ec.SECP256R1())
-    priv_bytes = key.private_numbers().private_value.to_bytes(32, 'big')
-    pub_bytes = key.public_key().public_bytes(
-        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
-    )
-    priv = base64.urlsafe_b64encode(priv_bytes).rstrip(b'=').decode()
-    pub = base64.urlsafe_b64encode(pub_bytes).rstrip(b'=').decode()
-
-    env_path = pathlib.Path(__file__).resolve().parents[1] / ".env"
-    with open(env_path, "a") as f:
-        f.write(f"\nVAPID_PRIVATE_KEY={priv}\nVAPID_PUBLIC_KEY={pub}\n")
-    os.environ["VAPID_PRIVATE_KEY"] = priv
-    os.environ["VAPID_PUBLIC_KEY"] = pub
-    print("Generated VAPID keys and saved to .env")
-    return priv, pub
-
-
-def send_web_push(subscriptions: list, title: str, body: str, url: str, vapid_private_key: str) -> None:
-    """Send Web Push notification to all subscribed browsers."""
-    from pywebpush import webpush, WebPushException
-    import json as json_lib
-
-    payload = json_lib.dumps({"title": title, "body": body, "url": url})
-    for sub in list(subscriptions):
-        try:
-            webpush(
-                subscription_info=sub,
-                data=payload,
-                vapid_private_key=vapid_private_key,
-                vapid_claims={"sub": "mailto:cc-caller@example.com"},
-            )
-        except WebPushException as e:
-            print(f"[push] Failed: {e}")
-            # Remove expired subscriptions
-            if "410" in str(e) or "404" in str(e):
-                subscriptions.remove(sub)
 
 
 def main():
