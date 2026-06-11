@@ -1,4 +1,5 @@
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -190,6 +191,35 @@ def test_api_sessions_token_gated_and_shaped(tmp_path, monkeypatch):
     assert data["current"]["name"] == "caller"
 
 
+def test_api_sessions_overlays_titles_from_callermem(tmp_path, monkeypatch):
+    state = make_state(tmp_path, monkeypatch)
+    state.task_manager.session_id = "current-sid"
+    fake = [
+        {"session_id": "aaa", "label": "from transcript", "age": "5m ago"},
+        {"session_id": "bbb", "label": "keep me", "age": "6m ago"},
+    ]
+
+    class StubCallerMem:
+        @staticmethod
+        def load(session_id):
+            if session_id == "aaa":
+                return {"title": "Better title", "history": [], "pending": None, "voice_notes": []}
+            if session_id == "current-sid":
+                return {"title": "Current Title", "history": [], "pending": None, "voice_notes": []}
+            return {"title": None, "history": [], "pending": None, "voice_notes": []}
+
+    import cc_caller.server as server_mod
+    monkeypatch.setattr(server_mod.sessions, "recent_sessions", lambda limit=5: list(fake))
+    monkeypatch.setattr(server_mod, "callermem", StubCallerMem)
+    client = TestClient(create_app(state))
+    resp = client.get("/api/sessions?token=sekrit")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sessions"][0]["label"] == "Better title"
+    assert data["sessions"][1]["label"] == "keep me"
+    assert data["current"]["title"] == "Current Title"
+
+
 def test_ws_session_param_switches_before_session_build(tmp_path, monkeypatch):
     state = make_state(tmp_path, monkeypatch)
     calls = []
@@ -290,6 +320,57 @@ def test_ws_builds_opener_from_pending(tmp_path, monkeypatch):
     assert captured["opening"] is None
 
 
+def test_ws_builds_fresh_opener_from_pending_ts(tmp_path, monkeypatch):
+    state = make_state(tmp_path, monkeypatch)
+    state.task_manager.pending = {"task": "t", "summary": "fresh result",
+                                  "detail": "", "meta": {}, "ts": time.time()}
+    captured = {}
+
+    class StubSession:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def run(self, browser_messages):
+            return
+
+    import cc_caller.server as server_mod
+    monkeypatch.setattr(server_mod, "GeminiLiveSession", StubSession)
+    client = TestClient(create_app(state))
+    try:
+        with client.websocket_connect("/ws?token=sekrit"):
+            pass
+    except WebSocketDisconnect:
+        pass
+    assert "right away" in captured["opening"]
+    assert "fresh result" in captured["opening"]
+
+
+def test_ws_builds_stale_opener_from_pending_ts(tmp_path, monkeypatch):
+    state = make_state(tmp_path, monkeypatch)
+    state.task_manager.pending = {"task": "t", "summary": "stale result",
+                                  "detail": "", "meta": {},
+                                  "ts": time.time() - 3 * 86400}
+    captured = {}
+
+    class StubSession:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def run(self, browser_messages):
+            return
+
+    import cc_caller.server as server_mod
+    monkeypatch.setattr(server_mod, "GeminiLiveSession", StubSession)
+    client = TestClient(create_app(state))
+    try:
+        with client.websocket_connect("/ws?token=sekrit"):
+            pass
+    except WebSocketDisconnect:
+        pass
+    assert "days ago" in captured["opening"]
+    assert "stale result" in captured["opening"]
+
+
 def test_ws_suppresses_pending_block_when_opener_carries_it(tmp_path, monkeypatch):
     state = make_state(tmp_path, monkeypatch)
     state.task_manager.pending = {"task": "t", "summary": "the tests now pass",
@@ -348,6 +429,28 @@ def test_ws_passes_session_end_callback(tmp_path, monkeypatch):
     except WebSocketDisconnect:
         pass
     assert callable(captured.get("on_session_end"))
+
+
+def test_ws_passes_remember_callback(tmp_path, monkeypatch):
+    state = make_state(tmp_path, monkeypatch)
+    captured = {}
+
+    class StubSession:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def run(self, browser_messages):
+            return
+
+    import cc_caller.server as server_mod
+    monkeypatch.setattr(server_mod, "GeminiLiveSession", StubSession)
+    client = TestClient(create_app(state))
+    try:
+        with client.websocket_connect("/ws?token=sekrit"):
+            pass
+    except WebSocketDisconnect:
+        pass
+    assert callable(captured.get("on_remember"))
 
 
 def test_ws_sends_transcript_frames_before_ready(tmp_path, monkeypatch):

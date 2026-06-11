@@ -112,6 +112,7 @@ RELAY_SYSTEM_PROMPT = (
     "Claude again. Results can belong to a different session than this one.\n"
     "- Use checkStatus if the user asks how the task is going.\n"
     "- If the user says stop, cancel, or never mind about a running task, call cancelTask.\n"
+    "- When the user asks you to remember something, call rememberNote with it.\n"
     "- If the conversation context below already answers a follow-up, answer "
     "directly without calling askCodingAgent again.\n"
     "- When the user says they are done ('goodbye', 'end session'), call "

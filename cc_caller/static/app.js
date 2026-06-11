@@ -165,7 +165,8 @@ function renderSessions(data) {
     box.appendChild(row);
     return row;
   };
-  const currentLabel = 'Current session' + (data.current.name ? ' — ' + data.current.name : '');
+  const currentName = data.current.title || data.current.name;
+  const currentLabel = 'Current session' + (currentName ? ' — ' + currentName : '');
   addRow(currentLabel, '',
     () => { chosenSession = null; }, true);
   (data.sessions || []).forEach(s => {

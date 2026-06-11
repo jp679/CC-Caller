@@ -8,7 +8,7 @@ from cc_caller import callermem
 def test_load_missing_returns_defaults(monkeypatch, tmp_path):
     monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
     state = callermem.load("abc-123")
-    assert state == {"history": [], "pending": None, "voice_notes": []}
+    assert state == {"history": [], "pending": None, "voice_notes": [], "title": None}
 
 
 def test_save_load_roundtrip(monkeypatch, tmp_path):
@@ -20,6 +20,22 @@ def test_save_load_roundtrip(monkeypatch, tmp_path):
     state = callermem.load("abc-123")
     assert state["history"] == [{"task": "t", "summary": "s"}]
     assert state["pending"]["summary"] == "s"
+    assert state["voice_notes"] == ["note one"]
+
+
+def test_title_roundtrip(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    callermem.save("abc-123", title="Memory Polish Session")
+    state = callermem.load("abc-123")
+    assert state["title"] == "Memory Polish Session"
+
+
+def test_title_preserved_when_unset(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    callermem.save("abc-123", title="Keep This", history=[{"task": "t", "summary": "s"}])
+    callermem.save("abc-123", voice_notes=["note one"])
+    state = callermem.load("abc-123")
+    assert state["title"] == "Keep This"
     assert state["voice_notes"] == ["note one"]
 
 
@@ -47,7 +63,7 @@ def test_corrupt_file_returns_defaults(monkeypatch, tmp_path, capsys):
     (tmp_path / "sessions").mkdir()
     (tmp_path / "sessions" / "abc-123.json").write_text("{nope")
     state = callermem.load("abc-123")
-    assert state == {"history": [], "pending": None, "voice_notes": []}
+    assert state == {"history": [], "pending": None, "voice_notes": [], "title": None}
     assert "[callermem]" in capsys.readouterr().out
 
 

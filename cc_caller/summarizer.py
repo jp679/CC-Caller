@@ -13,21 +13,36 @@ SUMMARIZE_PROMPT = (
 FALLBACK_SUMMARY = "Claude finished working but I couldn't generate a summary. Call back for details."
 
 CONVERSATION_PROMPT = (
-    "Summarize this voice call between a user and their coding assistant in "
-    "1-2 sentences: decisions made, tasks discussed, anything postponed. "
+    "Summarize this voice call between a user and their coding assistant. "
+    "Reply with EXACTLY two lines:\n"
+    "TITLE: a 3-6 word name for what this session is about\n"
+    "SUMMARY: 1-2 sentences -- decisions made, tasks discussed, anything postponed. "
     "Plain English, no markdown."
 )
 
 
 def summarize_conversation(voice_log_text):
-    """One-line memory of a voice call. Returns '' on any failure."""
+    """Compact memory of a voice call. Returns {"title","note"} or empty strings on failure."""
     result = subprocess.run(
         ["claude", "-p", CONVERSATION_PROMPT + "\n\n---\n\n" + voice_log_text],
         capture_output=True, text=True, cwd=tempfile.gettempdir(),
     )
     if result.returncode != 0:
-        return ""
-    return result.stdout.strip()
+        return {"title": "", "note": ""}
+    raw = result.stdout.strip()
+    if not raw:
+        return {"title": "", "note": ""}
+    title = ""
+    note = ""
+    for line in raw.splitlines():
+        lower = line.lower()
+        if lower.startswith("title:"):
+            title = line.split(":", 1)[1].strip()
+        elif lower.startswith("summary:"):
+            note = line.split(":", 1)[1].strip()
+    if title or note:
+        return {"title": title, "note": note}
+    return {"title": "", "note": raw}
 
 
 def summarize_output(claude_output: str) -> dict:

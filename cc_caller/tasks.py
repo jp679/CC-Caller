@@ -154,7 +154,8 @@ class TaskManager:
             if self.show_exchange:
                 print("[task] done ({}s): {}".format(int(time.time() - t0), summary))
             log_interaction(cleaned, output)
-            result = {"task": task, "summary": summary, "detail": output, "meta": meta}
+            result = {"task": task, "summary": summary, "detail": output, "meta": meta,
+                      "ts": time.time()}
             with self._state_lock:
                 self.history.append({"task": task, "summary": summary})
                 del self.history[:-50]   # bound growth; consumers read history[-5:]
@@ -163,13 +164,13 @@ class TaskManager:
             self._persist(hist, pend)
         except WorkerCancelled:
             result = {"task": task, "summary": "Task cancelled.", "detail": "",
-                      "meta": meta, "cancelled": True}
+                      "meta": meta, "cancelled": True, "ts": time.time()}
             # Do NOT set pending, do NOT append to history, do NOT persist
         except Exception as e:
             if self.show_exchange:
                 print("[task] FAILED: {}".format(e))
             result = {"task": task, "summary": "The task failed: {}".format(e),
-                      "detail": str(e), "meta": meta}
+                      "detail": str(e), "meta": meta, "ts": time.time()}
             with self._state_lock:
                 self.pending = result
                 hist, pend = list(self.history), self.pending

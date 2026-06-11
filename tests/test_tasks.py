@@ -27,6 +27,7 @@ def test_submit_runs_task_and_reports_completion(monkeypatch, tmp_path):
     assert results[0]["summary"] == "did the thing"
     assert results[0]["task"] == "fix the bug"
     assert results[0]["meta"] == {"fc_id": "f1"}
+    assert isinstance(results[0]["ts"], float)
     assert tm.history[-1]["task"] == "fix the bug"
     assert tm.pending is not None
     assert tm.take_pending()["summary"] == "did the thing"

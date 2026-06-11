@@ -77,7 +77,8 @@ async def test_handshake_declares_non_blocking_tools():
         setup = fake.received_of("setup")[0]["setup"]
         decls = setup["tools"][0]["functionDeclarations"]
         names = [d["name"] for d in decls]
-        assert names == ["askCodingAgent", "checkStatus", "cancelTask", "endSession"]
+        assert names == ["askCodingAgent", "checkStatus", "cancelTask", "rememberNote",
+                         "endSession"]
         assert decls[0]["behavior"] == "NON_BLOCKING"
         assert setup["systemInstruction"]["parts"][0]["text"] == "PROMPT"
         assert h.session.async_tools is True
@@ -226,6 +227,54 @@ async def test_check_status_and_end_session():
         await asyncio.wait_for(h.run_task, timeout=3)
         assert h.session.alive is False
         assert h.session.ended is True
+
+
+async def test_remember_note_saved():
+    saved = []
+
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.session.on_remember = saved.append
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "r1", "name": "rememberNote", "args": {"note": "Use black coffee."}}]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        resp = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        assert resp["id"] == "r1"
+        assert resp["response"] == {"saved": True}
+        assert saved == ["Use black coffee."]
+        await h.stop()
+
+
+async def test_remember_note_empty_note_yields_saved_false():
+    saved = []
+
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.session.on_remember = saved.append
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "r2", "name": "rememberNote", "args": {"note": "   "}}]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        resp = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        assert resp["response"] == {"saved": False}
+        assert saved == []
+        await h.stop()
+
+
+async def test_remember_note_without_callback_yields_saved_false():
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "r3", "name": "rememberNote", "args": {"note": "Remember this."}}]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        resp = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        assert resp["response"] == {"saved": False}
+        await h.stop()
 
 
 async def test_instant_completion_does_not_overtake_interim_ack():

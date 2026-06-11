@@ -1,23 +1,58 @@
 import json
 from unittest.mock import patch, MagicMock
 from cc_caller.summarizer import summarize_output
+from cc_caller.sessions import UTILITY_PREFIXES
 
 
 def test_summarize_conversation_returns_summary():
     with patch("cc_caller.summarizer.subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=0, stdout="Discussed pasta pot size.\n", stderr="")
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="TITLE: Pasta Setup\nSUMMARY: Discussed pasta pot size.\n",
+            stderr="",
+        )
         from cc_caller.summarizer import summarize_conversation
         out = summarize_conversation("user: hi\nagent: hello")
-    assert out == "Discussed pasta pot size."
+    assert out == {"title": "Pasta Setup", "note": "Discussed pasta pot size."}
     import tempfile
     assert mock_run.call_args[1].get("cwd") == tempfile.gettempdir()
+    prompt_arg = mock_run.call_args[0][0][2]
+    assert prompt_arg.startswith(UTILITY_PREFIXES)
 
 
 def test_summarize_conversation_empty_on_failure():
     with patch("cc_caller.summarizer.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="boom")
         from cc_caller.summarizer import summarize_conversation
-        assert summarize_conversation("x") == ""
+        assert summarize_conversation("x") == {"title": "", "note": ""}
+
+
+def test_summarize_conversation_parses_title_and_summary_lines():
+    with patch("cc_caller.summarizer.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="title: Memory Polish\nsummary: Added note memory and session labels.\n",
+            stderr="",
+        )
+        from cc_caller.summarizer import summarize_conversation
+        assert summarize_conversation("x") == {
+            "title": "Memory Polish",
+            "note": "Added note memory and session labels.",
+        }
+
+
+def test_summarize_conversation_falls_back_to_whole_output_when_unparsed():
+    with patch("cc_caller.summarizer.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="Plain summary without prefixes.\n",
+            stderr="",
+        )
+        from cc_caller.summarizer import summarize_conversation
+        assert summarize_conversation("x") == {
+            "title": "",
+            "note": "Plain summary without prefixes.",
+        }
 
 
 def test_summarize_output_returns_summary_and_detail():

@@ -3,6 +3,7 @@ import hmac
 import json
 import pathlib
 import threading
+import time
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
@@ -111,9 +112,22 @@ def create_app(state):
     async def api_sessions(request: Request):
         require_token(request)
         tm = state.task_manager
+        recent = sessions.recent_sessions(limit=5)
+        for s in recent:
+            try:
+                title = callermem.load(s["session_id"]).get("title")
+            except Exception:
+                title = None
+            if title:
+                s["label"] = title
+        current = {"id": tm.session_id, "name": tm.session_name}
+        try:
+            current["title"] = callermem.load(tm.session_id).get("title")
+        except Exception:
+            pass
         return {
-            "current": {"id": tm.session_id, "name": tm.session_name},
-            "sessions": sessions.recent_sessions(limit=5),
+            "current": current,
+            "sessions": recent,
         }
 
     @app.post("/api/push-subscribe")
@@ -156,27 +170,50 @@ def create_app(state):
         opening = None
         pend = state.task_manager.pending
         if pend:
-            opening = ("[SYSTEM] The user just reconnected after stepping away. "
-                       "Greet them briefly, then tell them this finished result right away: "
-                       + pend["summary"])
+            age = time.time() - pend.get("ts", time.time())
+            if age < 2 * 3600:
+                lead = ("[SYSTEM] The user just reconnected after stepping away. "
+                        "Greet them briefly, then tell them this finished result right away: ")
+            else:
+                hours = int(age // 3600)
+                when = "{} hours ago".format(hours) if hours < 48 else "{} days ago".format(
+                    hours // 24
+                )
+                lead = ("[SYSTEM] The user reconnected after a while. Greet them, mention "
+                        "that Claude finished a task {} , and give them the result: ").format(
+                            when
+                        )
+            opening = lead + pend["summary"]
 
         def on_session_end(voice_log):
             text = "\n".join("{}: {}".format(r, t) for r, t in voice_log)
             sid = state.task_manager.session_id
 
             def distill():
-                note = summarizer.summarize_conversation(text)
-                if note:
-                    import time as time_mod
-                    stamp = time_mod.strftime("%Y-%m-%d %H:%M")
-                    try:
+                out = summarizer.summarize_conversation(text)
+                note = out.get("note") if isinstance(out, dict) else out
+                title = out.get("title") if isinstance(out, dict) else ""
+                try:
+                    if note:
+                        stamp = time.strftime("%Y-%m-%d %H:%M")
                         callermem.append_voice_note(sid, "{} -- {}".format(stamp, note))
-                        if state.task_manager.session_id == sid:
-                            state.task_manager.voice_notes = callermem.load(sid)["voice_notes"]
-                    except Exception as e:
-                        print("[server] voice note save failed: {}".format(e))
+                    if title:
+                        callermem.save(sid, title=title)
+                    if (note or title) and state.task_manager.session_id == sid:
+                        state.task_manager.voice_notes = callermem.load(sid)["voice_notes"]
+                except Exception as e:
+                    print("[server] voice note save failed: {}".format(e))
 
             threading.Thread(target=distill, daemon=True).start()
+
+        def on_remember(note):
+            sid = state.task_manager.session_id
+            stamp = time.strftime("%Y-%m-%d %H:%M")
+            callermem.append_voice_note(
+                sid, "{} -- user asked to remember: {}".format(stamp, note)
+            )
+            if state.task_manager.session_id == sid:
+                state.task_manager.voice_notes = callermem.load(sid)["voice_notes"]
 
         session = GeminiLiveSession(
             api_key=state.api_key,
@@ -189,6 +226,7 @@ def create_app(state):
             show_exchange=state.show_exchange,
             opening=opening,
             on_session_end=on_session_end,
+            on_remember=on_remember,
         )
         state.session_holder["session"] = session
 

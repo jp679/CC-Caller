@@ -56,6 +56,21 @@ CANCEL_TASK = {
     "parameters": {"type": "OBJECT", "properties": {}},
 }
 
+REMEMBER_NOTE = {
+    "name": "rememberNote",
+    "description": (
+        "Save a note the user explicitly asks you to remember for this session "
+        "(preferences, decisions, reminders). Pass the note faithfully."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "note": {"type": "STRING"},
+        },
+        "required": ["note"],
+    },
+}
+
 
 class GeminiLiveSession:
     """One Gemini Live conversation, bridged to one browser connection.
@@ -66,7 +81,7 @@ class GeminiLiveSession:
 
     def __init__(self, api_key, system_prompt, task_manager, send_to_browser,
                  model=None, ws_url=None, on_ready=None, show_exchange=False,
-                 opening=None, on_session_end=None):
+                 opening=None, on_session_end=None, on_remember=None):
         self.api_key = api_key
         self.system_prompt = system_prompt
         self.tm = task_manager
@@ -77,6 +92,7 @@ class GeminiLiveSession:
         self.show_exchange = show_exchange
         self.opening = opening
         self.on_session_end = on_session_end
+        self.on_remember = on_remember
         self.async_tools = True
         self.alive = False
         self.ended = False
@@ -103,7 +119,9 @@ class GeminiLiveSession:
                 },
             },
             "systemInstruction": {"parts": [{"text": self.system_prompt}]},
-            "tools": [{"functionDeclarations": [ask, CHECK_STATUS, CANCEL_TASK, END_SESSION]}],
+            "tools": [{"functionDeclarations": [
+                ask, CHECK_STATUS, CANCEL_TASK, REMEMBER_NOTE, END_SESSION
+            ]}],
             "realtimeInputConfig": {"automaticActivityDetection": {
                 "silenceDurationMs": int(os.getenv("GEMINI_VAD_SILENCE_MS", "2000")),
                 "prefixPaddingMs": 500,
@@ -279,6 +297,17 @@ class GeminiLiveSession:
             else:
                 await self._respond(fc_id, name,
                                     {"cancelled": False, "message": "Nothing is running."})
+        elif name == "rememberNote":
+            note = (args.get("note") or "").strip()
+            if note and self.on_remember:
+                try:
+                    self.on_remember(note)
+                except Exception:
+                    await self._respond(fc_id, name, {"saved": False})
+                else:
+                    await self._respond(fc_id, name, {"saved": True})
+            else:
+                await self._respond(fc_id, name, {"saved": False})
         elif name == "endSession":
             self.ended = True
             await self._respond(fc_id, name, {"status": "ending"})

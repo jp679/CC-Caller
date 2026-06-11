@@ -25,7 +25,7 @@ def _state_file(session_id):
 
 def _read(session_id):
     """Raw disk state with defaults on missing/corrupt. No id validation."""
-    defaults = {"history": [], "pending": None, "voice_notes": []}
+    defaults = {"history": [], "pending": None, "voice_notes": [], "title": None}
     f = _state_file(session_id)
     if not f.exists():
         return defaults
@@ -35,6 +35,7 @@ def _read(session_id):
             "history": list(data.get("history") or []),
             "pending": data.get("pending", None),
             "voice_notes": list(data.get("voice_notes") or []),
+            "title": data.get("title", None),
         }
     except (ValueError, OSError) as e:
         print("[callermem] Could not read session file {}: {}".format(f, e))
@@ -47,7 +48,7 @@ def load(session_id):
     return _read(session_id)
 
 
-def _write_overlay(session_id, history, pending, voice_notes):
+def _write_overlay(session_id, history, pending, voice_notes, title):
     """Overlay the provided (non-_UNSET) fields onto disk state and atomically
     write (0600, tmp+os.replace). Caller must hold _LOCK. Fields left _UNSET
     keep their on-disk values -- this is what lets the task manager own
@@ -59,6 +60,8 @@ def _write_overlay(session_id, history, pending, voice_notes):
         state["pending"] = pending
     if voice_notes is not _UNSET:
         state["voice_notes"] = list(voice_notes or [])
+    if title is not _UNSET:
+        state["title"] = title
     state["history"] = state["history"][-HISTORY_CAP:]
     state["voice_notes"] = state["voice_notes"][-VOICE_NOTES_CAP:]
     f = _state_file(session_id)
@@ -75,14 +78,14 @@ def _write_overlay(session_id, history, pending, voice_notes):
         raise
 
 
-def save(session_id, history=_UNSET, pending=_UNSET, voice_notes=_UNSET):
+def save(session_id, history=_UNSET, pending=_UNSET, voice_notes=_UNSET, title=_UNSET):
     """Persist only the provided fields; omitted fields keep their disk values.
     Serialized by a module write lock so concurrent writers can't clobber
     each other's fields. Caps applied: history last HISTORY_CAP, voice_notes
     last VOICE_NOTES_CAP."""
     _validate_session_id(session_id)
     with _LOCK:
-        _write_overlay(session_id, history, pending, voice_notes)
+        _write_overlay(session_id, history, pending, voice_notes, title)
 
 
 def append_voice_note(session_id, note):
@@ -91,4 +94,4 @@ def append_voice_note(session_id, note):
     _validate_session_id(session_id)
     with _LOCK:
         notes = _read(session_id)["voice_notes"] + [note]
-        _write_overlay(session_id, _UNSET, _UNSET, notes)
+        _write_overlay(session_id, _UNSET, _UNSET, notes, _UNSET)
