@@ -89,6 +89,17 @@ RELAY_SYSTEM_PROMPT = (
 )
 
 
+def build_base_prompt():
+    """Relay prompt plus any user calibration from <config_dir>/prompt.md."""
+    extra = config.prompt_extra()
+    if not extra:
+        return RELAY_SYSTEM_PROMPT
+    return (RELAY_SYSTEM_PROMPT
+            + "\n\nUSER CALIBRATION (style and behavior preferences -- follow these "
+              "as long as they don't conflict with the tool instructions above):\n"
+            + extra)
+
+
 def make_on_complete(state, task_manager, public_url, vapid_priv):
     """Route a finished task: live session first, push + ntfy otherwise."""
     def on_complete(result):
@@ -148,7 +159,7 @@ def run_gemini_pwa(args):
     state = AppState(
         token=token, task_manager=task_manager, api_key=api_key,
         model=args.model, vapid_public_key=vapid_pub,
-        base_system_prompt=RELAY_SYSTEM_PROMPT,
+        base_system_prompt=build_base_prompt(),
         subscriptions=push.load_subscriptions(),
     )
     app = create_app(state)

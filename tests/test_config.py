@@ -62,3 +62,14 @@ def test_save_rejects_newlines(monkeypatch, tmp_path):
     monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path / "cfg"))
     with pytest.raises(ValueError):
         config.save_config_values(GEMINI_API_KEY="a\nINJECTED=evil")
+
+
+def test_prompt_extra_empty_when_missing(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    assert config.prompt_extra() == ""
+
+
+def test_prompt_extra_reads_and_strips_file(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "prompt.md").write_text("Respond in Spanish.\n\n")
+    assert config.prompt_extra() == "Respond in Spanish."

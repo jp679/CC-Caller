@@ -91,3 +91,19 @@ def test_real_taskmanager_pending_survives_push_fallback(monkeypatch, tmp_path):
     mock_push.send_web_push.assert_called_once()
     assert tm.pending is not None
     assert tm.pending["summary"] == "real done"
+
+
+def test_build_base_prompt_without_calibration(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    from cc_caller.cli import RELAY_SYSTEM_PROMPT, build_base_prompt
+    assert build_base_prompt() == RELAY_SYSTEM_PROMPT
+
+
+def test_build_base_prompt_appends_calibration(monkeypatch, tmp_path):
+    monkeypatch.setenv("CC_CALLER_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "prompt.md").write_text("Address the user as JP. Be terse.")
+    from cc_caller.cli import RELAY_SYSTEM_PROMPT, build_base_prompt
+    prompt = build_base_prompt()
+    assert prompt.startswith(RELAY_SYSTEM_PROMPT)
+    assert "USER CALIBRATION" in prompt
+    assert "Address the user as JP. Be terse." in prompt

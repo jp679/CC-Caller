@@ -24,6 +24,18 @@ def load_config() -> None:
     load_dotenv(pathlib.Path.cwd() / ".env", override=True)
 
 
+def prompt_extra() -> str:
+    """User calibration text appended to the relay prompt (prompt.md in the config dir)."""
+    f = config_dir() / "prompt.md"
+    if not f.exists():
+        return ""
+    try:
+        return f.read_text().strip()
+    except OSError as e:
+        print("[config] Could not read prompt.md: {}".format(e))
+        return ""
+
+
 def save_config_values(**values) -> None:
     """Set keys in the config-dir .env, replacing existing lines for those keys."""
     cleaned = {}
