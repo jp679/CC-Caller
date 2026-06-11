@@ -19,6 +19,8 @@ Hang up anytime; you get a push notification when Claude finishes.
 
 **One-liner:**
 
+Needs Python 3.9+ and [pipx](https://pipx.pypa.io) (or [uv](https://docs.astral.sh/uv/)).
+
 ```bash
 pipx install git+https://github.com/jp679/CC-Caller
 # or try without installing:
@@ -35,14 +37,14 @@ python3 -m pytest tests/ -q
 
 ## Quickstart
 
+Requires the [Claude Code CLI](https://claude.com/claude-code) on PATH and
+`cloudflared` (`brew install cloudflared`).
+
 ```bash
 cc-caller setup        # paste your free Gemini key (aistudio.google.com/apikey)
 cd ~/your-project
 cc-caller              # prints a URL + QR code — open it on your phone
 ```
-
-Requires the [Claude Code CLI](https://claude.com/claude-code) on PATH and
-`cloudflared` (`brew install cloudflared`).
 
 Scan the QR, tap Connect, and talk. Add to Home Screen for the full app feel.
 
@@ -72,6 +74,7 @@ served without it.
 
 Options: `--session-id NAME` (persistent Claude session), `--new-session`,
 `--tunnel-url https://...` (fixed domain instead of cloudflared),
+`--tunnel ngrok` (use ngrok; set `NGROK_DOMAIN` for a stable domain),
 `--model models/...` (Gemini Live model override), positional instruction
 to start Claude immediately: `cc-caller "refactor the auth module"`.
 
