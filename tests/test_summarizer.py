@@ -46,3 +46,11 @@ def test_summarize_output_handles_claude_failure():
 
     assert result["summary"] == "Claude finished working but I couldn't generate a summary. Call back for details."
     assert result["detail"] == ""
+
+
+def test_summarize_output_runs_outside_project():
+    import tempfile
+    with patch("cc_caller.summarizer.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout='{"summary": "done", "detail": "x"}', stderr="")
+        summarize_output("some claude output")
+    assert mock_run.call_args[1].get("cwd") == tempfile.gettempdir()

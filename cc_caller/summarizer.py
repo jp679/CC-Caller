@@ -1,5 +1,6 @@
 import json
 import subprocess
+import tempfile
 
 SUMMARIZE_PROMPT = (
     "Summarize this coding assistant output for a phone call. "
@@ -18,6 +19,7 @@ def summarize_output(claude_output: str) -> dict:
         ["claude", "-p", prompt],
         capture_output=True,
         text=True,
+        cwd=tempfile.gettempdir(),
     )
 
     if result.returncode != 0 or not result.stdout.strip():

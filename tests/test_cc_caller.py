@@ -68,3 +68,28 @@ def test_run_claude_omits_name_when_none():
         run_claude("do it", "sid-1", session_name=None, is_first_run=False)
     cmd = mock_run.call_args[0][0]
     assert "--name" not in cmd
+
+
+def test_clean_transcript_runs_outside_project(tmp_path):
+    import tempfile
+    with patch("cc_caller.claude_worker.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="cleaned", stderr="")
+        from cc_caller.claude_worker import clean_transcript
+        clean_transcript("raw text")
+    assert mock_run.call_args[1].get("cwd") == tempfile.gettempdir()
+
+
+def test_check_needs_input_runs_outside_project(tmp_path):
+    import tempfile
+    with patch("cc_caller.claude_worker.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="NO", stderr="")
+        from cc_caller.claude_worker import check_needs_input
+        check_needs_input("some output")
+    assert mock_run.call_args[1].get("cwd") == tempfile.gettempdir()
+
+
+def test_run_claude_keeps_inherited_cwd():
+    with patch("cc_caller.claude_worker.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        run_claude("task", "sid", session_name="s", is_first_run=False)
+    assert "cwd" not in mock_run.call_args[1]

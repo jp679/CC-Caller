@@ -1,6 +1,7 @@
 """Claude Code worker subprocess layer: sandboxed runs, sessions, judge prompts."""
 import pathlib
 import subprocess
+import tempfile
 import uuid
 from typing import Tuple
 
@@ -70,6 +71,7 @@ def clean_transcript(raw_transcript: str) -> str:
         ["claude", "-p", prompt],
         capture_output=True,
         text=True,
+        cwd=tempfile.gettempdir(),
     )
     cleaned = result.stdout.strip()
     if not cleaned or result.returncode != 0:
@@ -115,6 +117,7 @@ def check_needs_input(claude_output: str) -> bool:
         input=claude_output,
         capture_output=True,
         text=True,
+        cwd=tempfile.gettempdir(),
     )
     return result.stdout.strip().upper().startswith("YES")
 

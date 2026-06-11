@@ -107,3 +107,30 @@ def test_recent_messages_limit_and_truncate(tmp_path, monkeypatch):
 def test_recent_messages_missing_session(tmp_path, monkeypatch):
     monkeypatch.setattr(sessions, "project_transcript_dir", lambda cwd=None: tmp_path)
     assert sessions.recent_messages("77777777-7777-7777-7777-777777777777") == []
+
+
+def test_recent_sessions_skips_utility_sessions(tmp_path, monkeypatch):
+    proj_dir = tmp_path / "p"
+    proj_dir.mkdir()
+    monkeypatch.setattr(sessions, "project_transcript_dir", lambda cwd=None: proj_dir)
+    _write_session(proj_dir, "88888888-8888-8888-8888-888888888888",
+                   "You are a transcript cleaner. Clean up the raw voice transcript below.", 30)
+    _write_session(proj_dir, "99999999-9999-9999-9999-999999999999", "real conversation", 600)
+    result = sessions.recent_sessions(limit=1)
+    assert len(result) == 1
+    assert result[0]["session_id"] == "99999999-9999-9999-9999-999999999999"
+
+
+def test_recent_messages_skips_system_injections(tmp_path, monkeypatch):
+    proj_dir = tmp_path / "p"
+    proj_dir.mkdir()
+    monkeypatch.setattr(sessions, "project_transcript_dir", lambda cwd=None: proj_dir)
+    sid = "aaaaaaaa-1111-2222-3333-444444444444"
+    lines = [
+        json.dumps({"type": "user", "message": {"role": "user", "content": "real question"}}),
+        json.dumps({"type": "user", "message": {"role": "user",
+                    "content": "[SYSTEM] The coding task just finished. Tell the user..."}}),
+    ]
+    (proj_dir / "{}.jsonl".format(sid)).write_text("\n".join(lines) + "\n")
+    msgs = sessions.recent_messages(sid)
+    assert msgs == [{"role": "user", "text": "real question"}]

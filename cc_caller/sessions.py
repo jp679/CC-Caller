@@ -8,6 +8,13 @@ import time
 _SESSION_FILE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$")
 
+UTILITY_PREFIXES = (
+    "You are a transcript cleaner",
+    "Summarize this coding assistant output",
+    "Read this output and answer",
+    "Read this transcript from a phone call",
+)
+
 
 def project_transcript_dir(cwd=None):
     cwd = pathlib.Path(cwd or pathlib.Path.cwd()).resolve()
@@ -69,10 +76,15 @@ def recent_sessions(limit=5, cwd=None):
             continue  # vanished between iterdir() and stat()
     stamped.sort(key=lambda pair: pair[0], reverse=True)
     out = []
-    for mtime, f in stamped[:limit]:
+    for mtime, f in stamped:
+        if len(out) >= limit:
+            break
+        label = _first_user_text(f) or "(no user messages)"
+        if label.startswith(UTILITY_PREFIXES):
+            continue
         out.append({
             "session_id": f.stem,
-            "label": (_first_user_text(f) or "(no user messages)")[:60],
+            "label": label[:60],
             "age": _age(mtime),
         })
     return out
@@ -102,6 +114,8 @@ def recent_messages(session_id, cwd=None, limit=12, max_chars=240):
                     continue
                 text = text.strip()
                 if not text or text.startswith("<"):
+                    continue
+                if text.startswith(UTILITY_PREFIXES) or text.startswith("[SYSTEM]"):
                     continue
                 out.append({"role": role, "text": text[:max_chars]})
     except OSError:
