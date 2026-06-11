@@ -138,3 +138,31 @@ def test_system_prompt_includes_history_and_pending(tmp_path, monkeypatch):
     assert "fix auth" in prompt and "auth fixed" in prompt
     assert "tests added" in prompt
     assert "PENDING RESULT" in prompt
+
+
+def test_manifest_embeds_token_when_presented(tmp_path, monkeypatch):
+    client = TestClient(create_app(make_state(tmp_path, monkeypatch)))
+    resp = client.get("/manifest.json?token=sekrit")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["start_url"] == "/?callback=0&token=sekrit"
+
+
+def test_manifest_plain_without_valid_token(tmp_path, monkeypatch):
+    client = TestClient(create_app(make_state(tmp_path, monkeypatch)))
+    for url in ("/manifest.json", "/manifest.json?token=wrong"):
+        resp = client.get(url)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "sekrit" not in resp.text
+        assert data["start_url"] == "/?callback=0"
+
+
+def test_index_links_tokened_manifest_when_presented(tmp_path, monkeypatch):
+    client = TestClient(create_app(make_state(tmp_path, monkeypatch)))
+    resp = client.get("/?token=sekrit")
+    assert resp.status_code == 200
+    assert 'href="/manifest.json?token=sekrit"' in resp.text
+    resp = client.get("/")
+    assert 'href="/manifest.json"' in resp.text
+    assert "sekrit" not in resp.text

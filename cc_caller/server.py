@@ -1,5 +1,6 @@
 """FastAPI server for the Gemini PWA: token-gated WS bridge, push, static."""
 import hmac
+import json
 import pathlib
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -55,11 +56,14 @@ def create_app(state):
             raise HTTPException(status_code=401, detail="bad token")
 
     @app.get("/")
-    async def index():
-        return FileResponse(
-            STATIC_DIR / "index.html",
-            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-        )
+    async def index(request: Request):
+        html = (STATIC_DIR / "index.html").read_text()
+        supplied = request.query_params.get("token", "")
+        if _token_ok(state, supplied):
+            html = html.replace('href="/manifest.json"',
+                                'href="/manifest.json?token={}"'.format(supplied))
+        return Response(html, media_type="text/html",
+                        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
     @app.get("/sw.js")
     async def service_worker():
@@ -68,9 +72,13 @@ def create_app(state):
                             headers={"Service-Worker-Allowed": "/"})
 
     @app.get("/manifest.json")
-    async def manifest():
-        return FileResponse(STATIC_DIR / "manifest.json",
-                            media_type="application/manifest+json")
+    async def manifest(request: Request):
+        data = json.loads((STATIC_DIR / "manifest.json").read_text())
+        supplied = request.query_params.get("token", "")
+        if _token_ok(state, supplied):
+            data["start_url"] = "/?callback=0&token={}".format(supplied)
+        return Response(json.dumps(data), media_type="application/manifest+json",
+                        headers={"Cache-Control": "no-store"})
 
     @app.get("/api/config")
     async def api_config(request: Request):
