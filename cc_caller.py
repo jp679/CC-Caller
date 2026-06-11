@@ -71,6 +71,19 @@ DISALLOWED_FILES = [
 ]
 
 
+def log_interaction(task: str, result: str) -> None:
+    """Append a task + result entry to .cc-caller-log in the current directory."""
+    from datetime import datetime
+    log_path = pathlib.Path.cwd() / ".cc-caller-log"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    entry = f"\n--- {timestamp} ---\nTask: {task}\nResult: {result}\n"
+    try:
+        with open(log_path, "a") as f:
+            f.write(entry)
+    except Exception as e:
+        print(f"[log] Failed to write: {e}")
+
+
 CLEAN_TRANSCRIPT_PROMPT = (
     "You are a transcript cleaner. Clean up the raw voice transcript below. "
     "Remove filler words, false starts, and repetitions. "
@@ -192,9 +205,62 @@ def start_tunnel(port: int, method: str) -> tuple:
         raise RuntimeError("Cloudflare tunnel failed to start")
     else:
         from pyngrok import ngrok
-        tunnel = ngrok.connect(port, "http")
+        domain = os.getenv("NGROK_DOMAIN", "")
+        kwargs = {"addr": port, "proto": "http"}
+        if domain:
+            kwargs["domain"] = domain
+        tunnel = ngrok.connect(**kwargs)
         url = tunnel.public_url
         return url, lambda: ngrok.disconnect(url)
+
+
+def ensure_vapid_keys() -> tuple:
+    """Return (private_key, public_key) in base64url format. Generate and save if missing."""
+    priv = os.getenv("VAPID_PRIVATE_KEY", "")
+    pub = os.getenv("VAPID_PUBLIC_KEY", "")
+    if priv and pub:
+        return priv, pub
+
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import serialization
+    import base64
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    priv_bytes = key.private_numbers().private_value.to_bytes(32, 'big')
+    pub_bytes = key.public_key().public_bytes(
+        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
+    )
+    priv = base64.urlsafe_b64encode(priv_bytes).rstrip(b'=').decode()
+    pub = base64.urlsafe_b64encode(pub_bytes).rstrip(b'=').decode()
+
+    env_path = pathlib.Path(__file__).parent / ".env"
+    with open(env_path, "a") as f:
+        f.write(f"\nVAPID_PRIVATE_KEY={priv}\nVAPID_PUBLIC_KEY={pub}\n")
+    os.environ["VAPID_PRIVATE_KEY"] = priv
+    os.environ["VAPID_PUBLIC_KEY"] = pub
+    print("Generated VAPID keys and saved to .env")
+    return priv, pub
+
+
+def send_web_push(subscriptions: list, title: str, body: str, url: str, vapid_private_key: str) -> None:
+    """Send Web Push notification to all subscribed browsers."""
+    from pywebpush import webpush, WebPushException
+    import json as json_lib
+
+    payload = json_lib.dumps({"title": title, "body": body, "url": url})
+    for sub in list(subscriptions):
+        try:
+            webpush(
+                subscription_info=sub,
+                data=payload,
+                vapid_private_key=vapid_private_key,
+                vapid_claims={"sub": "mailto:cc-caller@example.com"},
+            )
+        except WebPushException as e:
+            print(f"[push] Failed: {e}")
+            # Remove expired subscriptions
+            if "410" in str(e) or "404" in str(e):
+                subscriptions.remove(sub)
 
 
 TERMINATION_PHRASES = [
@@ -221,16 +287,18 @@ def main():
     parser.add_argument("--gemini", action="store_true", help="Use Gemini Live for voice (free, no VAPI needed)")
     parser.add_argument("--live", action="store_true", help="Persistent Gemini voice session — no hang-up/call-back loop")
     parser.add_argument("--bridge", action="store_true", help="Persistent Gemini voice session — server-side bridge, best mode")
+    parser.add_argument("--pwa", action="store_true", help="Serve a PWA — browser voice call with push notifications, no app install")
     parser.add_argument("--sip", action="store_true", help="Use SIP for inbound calls (native phone ring via Linphone/Zoiper)")
     parser.add_argument("--tunnel", choices=["cloudflare", "ngrok"], default="cloudflare", help="Tunnel provider (default: cloudflare, free)")
+    parser.add_argument("--tunnel-url", type=str, default=None, help="Fixed public URL (skip tunnel, e.g. https://cc-caller.yourdomain.com)")
     parser.add_argument("--session-id", type=str, default="caller", help="Claude session ID (default: 'caller', persists across restarts)")
     parser.add_argument("--new-session", action="store_true", help="Start a fresh Claude session instead of resuming")
     parser.add_argument("--interval-minutes", type=int, default=15)
     parser.add_argument("--port", type=int, default=int(os.getenv("WEBHOOK_PORT", "8765")))
     args = parser.parse_args()
 
-    if args.live or args.bridge:
-        args.inbound = True  # --live/--bridge imply inbound
+    if args.live or args.bridge or args.pwa:
+        args.inbound = True  # --live/--bridge/--pwa imply inbound
     if not args.inbound and not args.instruction:
         parser.error("Either provide an instruction or use --inbound")
 
@@ -247,6 +315,8 @@ def main():
         parser.error("--gemini requires GEMINI_API_KEY in .env")
     if args.sip and not (api_key and sip_phone_number_id):
         parser.error("--sip requires VAPI_API_KEY and VAPI_SIP_PHONE_NUMBER_ID in .env")
+    if args.pwa and not public_key:
+        parser.error("--pwa requires VAPI_PUBLIC_KEY in .env")
     if args.web and not public_key:
         parser.error("--web requires VAPI_PUBLIC_KEY in .env")
     if not args.gemini and not args.web and not args.sip and not api_key:
@@ -278,8 +348,13 @@ def main():
     )
     server_thread.start()
 
-    # Start tunnel
-    public_url, cleanup_tunnel = start_tunnel(args.port, args.tunnel)
+    # Start tunnel (or use fixed URL)
+    if args.tunnel_url:
+        public_url = args.tunnel_url.rstrip("/")
+        cleanup_tunnel = lambda: None
+        print(f"Using fixed URL: {public_url}")
+    else:
+        public_url, cleanup_tunnel = start_tunnel(args.port, args.tunnel)
     webhook_url = f"{public_url}/webhook"
     print(f"Webhook listening at {webhook_url}")
 
@@ -294,7 +369,153 @@ def main():
     last_call_time = 0.0
     first_run = True
 
-    if args.bridge:
+    if args.pwa:
+        from vapi_client import build_persistent_sip_config
+
+        vapid_priv, vapid_pub = ensure_vapid_keys()
+
+        # Conversation history for cross-call context
+        conversation_history = []  # list of {"task": str, "result": str}
+
+        def build_pwa_config():
+            """Build assistant config with recent conversation context injected."""
+            config = build_persistent_sip_config(webhook_url)
+            if conversation_history:
+                context = "\n\nRECENT CONVERSATION (you said this in previous calls — use it to answer follow-ups, repeats, and clarifications WITHOUT calling askCodingAgent):\n"
+                for entry in conversation_history[-5:]:
+                    context += f"\nUser asked: {entry['task']}\nYou responded: {entry['result'][:500]}\n"
+                config["model"]["messages"][0]["content"] += context
+            return config
+
+        # Store config for PWA page to fetch
+        app.state.pwa_config = {
+            "assistantConfig": build_pwa_config(),
+            "publicKey": public_key,
+            "vapidPublicKey": vapid_pub,
+        }
+
+        # Track call state for hybrid mode
+        call_active = threading.Event()
+        call_active.set()
+        pending_result = {"output": None}
+        tool_lock = threading.Lock()
+        task_in_progress = threading.Event()
+
+        def on_webhook_event(event_type):
+            if event_type == "end-of-call-report":
+                print("[pwa] Call ended")
+                call_active.clear()
+                if task_in_progress.is_set():
+                    print("[pwa] Task still in progress — will push when done")
+
+        app.state.on_webhook_event = on_webhook_event
+
+        def handle_tool_call(task: str) -> str:
+            nonlocal session_id, first_run
+            # Tool call from VAPI means a call is active
+            call_active.set()
+            if not tool_lock.acquire(timeout=1):
+                print("[tool] Already processing a task, skipping duplicate")
+                return "Still working on the previous request. Please wait."
+            try:
+                print(f"\n[tool] Task: {task}")
+                task_in_progress.set()
+                instruction = clean_transcript(task)
+                print(f"[tool] Cleaned: {instruction}")
+                output, session_id = run_claude(instruction, session_id, session_name=session_name, is_first_run=first_run)
+                first_run = False
+                print(f"[tool] Claude output: {len(output)} chars")
+                task_in_progress.clear()
+            except Exception as e:
+                task_in_progress.clear()
+                tool_lock.release()
+                raise e
+
+            truncated = output[:2000] if len(output) > 2000 else output
+
+            # Log and track for cross-call context
+            log_interaction(task, truncated)
+            conversation_history.append({"task": task, "result": truncated})
+            if len(conversation_history) > 10:
+                del conversation_history[:-10]
+            # Refresh config with updated context
+            app.state.pwa_config["assistantConfig"] = build_pwa_config()
+
+            if call_active.is_set():
+                tool_lock.release()
+                return truncated
+            else:
+                print("[pwa] Call dropped during task — will push notification")
+                pending_result["output"] = truncated
+                tool_lock.release()
+                return truncated
+
+        app.state.tool_call_handler = handle_tool_call
+
+        pwa_url = f"{public_url}/pwa"
+        print(f"PWA: {pwa_url}")
+        send_notification(
+            title="CC-Caller PWA Ready",
+            message="Open to start voice session",
+            url=pwa_url,
+        )
+
+        try:
+            print("\nPWA session active. Press Ctrl+C to exit.")
+            while True:
+                time.sleep(1)
+
+                # Check for pending result to push
+                if pending_result["output"] and not call_active.is_set() and not task_in_progress.is_set():
+                    output = pending_result["output"]
+                    pending_result["output"] = None
+                    print(f"\n[pwa] Pushing result ({len(output)} chars)...")
+
+                    summary_data = summarize_output(output)
+
+                    # Build callback assistant so user hears the result
+                    callback_config = build_assistant_config(
+                        summary=summary_data["summary"],
+                        detail=summary_data["detail"],
+                        webhook_url=webhook_url,
+                    )
+
+                    # Temporarily swap config so PWA page gets callback assistant
+                    app.state.pwa_config["assistantConfig"] = callback_config
+
+                    # Web Push notification
+                    if app.state.push_subscriptions:
+                        send_web_push(
+                            app.state.push_subscriptions,
+                            title="CC-Caller Result Ready",
+                            body=summary_data["summary"][:200],
+                            url=f"{pwa_url}?callback=1",
+                            vapid_private_key=vapid_priv,
+                        )
+                        print("[pwa] Web Push sent")
+
+                    # Also ntfy as fallback
+                    send_notification(
+                        title="CC-Caller Result Ready",
+                        message=summary_data["summary"][:200],
+                        url=f"{pwa_url}?callback=1",
+                    )
+
+                    # Restore persistent config after a delay
+                    def restore_config():
+                        time.sleep(60)
+                        app.state.pwa_config["assistantConfig"] = build_pwa_config()
+                        print("[pwa] Config restored to persistent mode")
+
+                    threading.Thread(target=restore_config, daemon=True).start()
+
+        except KeyboardInterrupt:
+            print("\nExiting.")
+        finally:
+            cleanup_tunnel()
+        return
+
+    elif args.bridge:
         gemini_key = os.getenv("GEMINI_API_KEY", "")
         if not gemini_key:
             print("ERROR: --bridge requires GEMINI_API_KEY")
@@ -319,10 +540,7 @@ def main():
         )
 
         if use_sip:
-            from vapi_client import (
-                build_persistent_sip_config, build_assistant_config,
-                configure_inbound_number, create_call,
-            )
+            from vapi_client import build_persistent_sip_config
 
             api_key = os.environ["VAPI_API_KEY"]
             sip_phone_number_id = os.environ["VAPI_SIP_PHONE_NUMBER_ID"]
@@ -355,9 +573,6 @@ def main():
                             time.sleep(2)  # Let the handler store the result
                             # pending_result should now be set
                         threading.Thread(target=wait_and_callback, daemon=True).start()
-                if event_type in ("assistant.started",):
-                    print("[hybrid] Call started")
-                    call_active.set()
 
             app.state.on_webhook_event = on_webhook_event
 
@@ -366,6 +581,8 @@ def main():
 
             def handle_tool_call(task: str) -> str:
                 nonlocal session_id, first_run
+                # Tool call from VAPI means a call is active
+                call_active.set()
                 if not tool_lock.acquire(timeout=1):
                     print("[tool] Already processing a task, skipping duplicate")
                     return "Still working on the previous request. Please wait."
@@ -384,6 +601,7 @@ def main():
                     raise e
 
                 truncated = output[:2000] if len(output) > 2000 else output
+                log_interaction(task, truncated)
 
                 # Check if call is still active
                 if call_active.is_set():
@@ -504,6 +722,7 @@ def main():
 
                 # Inject result directly into Gemini
                 truncated = output[:2000] if len(output) > 2000 else output
+                log_interaction(instruction, truncated)
                 bridge.inject_text(f"RELAY: {truncated}")
                 print("Result injected into Gemini session")
 
@@ -572,6 +791,7 @@ def main():
                 first_run = False
                 progress_stop.set()
                 print(f"Output length: {len(output)} chars")
+                log_interaction(instruction, output)
 
                 # Push result to Gemini via SSE
                 app.state.live_msg_counter += 1
@@ -706,6 +926,7 @@ def main():
             output, session_id = run_claude(instruction, session_id, session_name=session_name, is_first_run=first_run)
             first_run = False
             print(f"Output length: {len(output)} chars")
+            log_interaction(instruction, output)
 
             if not should_call(mode, output, last_call_time, args.interval_minutes):
                 print("No call needed, continuing autonomously...")

@@ -49,6 +49,16 @@ Then dial `sip:cc-caller@sip.vapi.ai` from Linphone.
 
 **Linphone setup:** Add account with username `cc-caller`, domain `sip.vapi.ai`, password = your VAPI API key.
 
+### PWA — Browser voice call with push notifications
+
+Same persistent VAPI session as SIP, but through the browser. Add to Home Screen for native feel. Push notifications when Claude finishes (no ntfy needed).
+
+```bash
+cc-caller --pwa
+```
+
+Open the URL from the notification. Grant notification permission when prompted.
+
 ### Browser — Persistent session via web
 
 Same persistent session, no app install needed. Requires screen to stay on.
@@ -116,4 +126,6 @@ nohup cc-caller --bridge --sip &
 | `vapi_client.py` | VAPI API — assistant configs, call creation |
 | `gemini_bridge.py` | Server-side Gemini WebSocket bridge |
 | `summarizer.py` | Voice-friendly summaries via claude -p |
+| `static/sw.js` | Service worker for PWA push notifications |
+| `static/manifest.json` | PWA manifest for Add to Home Screen |
 | `cc-caller` | Shell wrapper for global CLI access |

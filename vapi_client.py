@@ -38,16 +38,20 @@ SYSTEM_PROMPT_TEMPLATE = (
 )
 
 PERSISTENT_SIP_SYSTEM_PROMPT = (
-    "You are a voice relay between the user and a coding agent.\n"
-    "You have ZERO knowledge of any code, project, or files.\n"
+    "You are a voice interface for a coding agent. You ARE the assistant — speak as 'I', not 'the agent'.\n"
     "RULES:\n"
     "- Greet: 'Hey, what would you like me to work on?'\n"
-    "- When the user gives ANY task, question, or instruction about code/files/project: "
-    "IMMEDIATELY call the askCodingAgent tool with their request. Say 'Let me check on that.' while waiting.\n"
-    "- When askCodingAgent returns: read the result to the user, then ask 'What next?'\n"
-    "- NEVER answer coding questions yourself. ALWAYS use the tool.\n"
-    "- If user says 'end session': say 'Goodbye.' and use endCall.\n"
-    "Be brief. English only."
+    "- USE the askCodingAgent tool ONLY for NEW tasks, questions, or instructions about code/files/project.\n"
+    "- Do NOT use the tool for conversational requests. Handle these yourself:\n"
+    "  - 'Repeat that' / 'Say that again' — re-read your last response.\n"
+    "  - 'Summarize' / 'Shorter' — summarize what you already said.\n"
+    "  - 'What did you say?' — repeat the key points.\n"
+    "  - 'Thanks' / 'OK' / 'Got it' — acknowledge and ask 'What next?'\n"
+    "  - Clarifying questions about what you JUST said — answer from context.\n"
+    "- When askCodingAgent returns: read the result naturally, then ask 'What next?'\n"
+    "- NEVER make up information about code or files. If you don't know, use the tool.\n"
+    "- If user says 'end session' or 'goodbye': say 'Goodbye.' and use endCall.\n"
+    "Be conversational but brief. English only."
 )
 
 
@@ -91,7 +95,8 @@ def build_persistent_sip_config(webhook_url: str) -> dict:
                         }
                     },
                     "server": {
-                        "url": f"{webhook_url.replace('/webhook', '')}/tool-call"
+                        "url": f"{webhook_url.replace('/webhook', '')}/tool-call",
+                        "timeoutSeconds": 120
                     }
                 }
             ],
@@ -101,13 +106,13 @@ def build_persistent_sip_config(webhook_url: str) -> dict:
             "provider": "11labs",
             "voiceId": "21m00Tcm4TlvDq8ikWAM",
             "model": "eleven_turbo_v2_5",
-            "speed": 1.2,
+            "speed": 1.0,
         },
         "endCallPhrases": ["end session", "goodbye", "we're done"],
         "stopSpeakingPlan": {
             "numWords": 0,
-            "voiceSeconds": 0.2,
-            "backoffSeconds": 1,
+            "voiceSeconds": 0.5,
+            "backoffSeconds": 1.5,
         },
         "backgroundSound": "off",
         "silenceTimeoutSeconds": 300,
@@ -163,7 +168,7 @@ def build_assistant_config(
             "provider": "11labs",
             "voiceId": "21m00Tcm4TlvDq8ikWAM",
             "model": "eleven_turbo_v2_5",
-            "speed": 1.2,
+            "speed": 1.0,
         },
         "stopSpeakingPlan": {
             "numWords": 0,
@@ -214,7 +219,7 @@ def build_inbound_assistant_config(webhook_url: str) -> dict:
             "provider": "11labs",
             "voiceId": "21m00Tcm4TlvDq8ikWAM",
             "model": "eleven_turbo_v2_5",
-            "speed": 1.2,
+            "speed": 1.0,
         },
         "stopSpeakingPlan": {
             "numWords": 0,
