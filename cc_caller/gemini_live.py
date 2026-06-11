@@ -59,7 +59,7 @@ class GeminiLiveSession:
 
     def __init__(self, api_key, system_prompt, task_manager, send_to_browser,
                  model=None, ws_url=None, on_ready=None, show_exchange=False,
-                 opening=None):
+                 opening=None, on_session_end=None):
         self.api_key = api_key
         self.system_prompt = system_prompt
         self.tm = task_manager
@@ -69,9 +69,11 @@ class GeminiLiveSession:
         self.on_ready = on_ready
         self.show_exchange = show_exchange
         self.opening = opening
+        self.on_session_end = on_session_end
         self.async_tools = True
         self.alive = False
         self.ended = False
+        self.voice_log = []
         self._ws = None
         self._loop = None
         self._current_fc = None      # {"id", "name"} of the in-flight askCodingAgent
@@ -154,6 +156,11 @@ class GeminiLiveSession:
                     print("[gemini] pump error: {!r}".format(exc))
         finally:
             self.alive = False
+            if self.on_session_end and len(self.voice_log) >= 2:
+                try:
+                    self.on_session_end(list(self.voice_log))
+                except Exception as e:
+                    print("[gemini] on_session_end error: {}".format(e))
             try:
                 await self._ws.close()
             except Exception:
@@ -168,6 +175,12 @@ class GeminiLiveSession:
             elif msg.get("type") == "end":
                 break
         await self._ws.close()
+
+    def _log_voice(self, role, text):
+        if self.voice_log and self.voice_log[-1][0] == role:
+            self.voice_log[-1] = (role, self.voice_log[-1][1] + text)
+        else:
+            self.voice_log.append((role, text))
 
     async def _pump_gemini(self):
         async for raw in self._ws:
@@ -186,9 +199,11 @@ class GeminiLiveSession:
             if sc:
                 text = sc.get("inputTranscription", {}).get("text")
                 if text:
+                    self._log_voice("user", text)
                     await self.send_to_browser({"type": "caption", "role": "user", "text": text})
                 text = sc.get("outputTranscription", {}).get("text")
                 if text:
+                    self._log_voice("agent", text)
                     await self.send_to_browser({"type": "caption", "role": "agent", "text": text})
                 for part in sc.get("modelTurn", {}).get("parts", []):
                     blob = part.get("inlineData", {}).get("data")

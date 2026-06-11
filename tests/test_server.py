@@ -290,6 +290,36 @@ def test_ws_builds_opener_from_pending(tmp_path, monkeypatch):
     assert captured["opening"] is None
 
 
+def test_system_prompt_includes_voice_notes(tmp_path, monkeypatch):
+    state = make_state(tmp_path, monkeypatch)
+    state.task_manager.voice_notes = ["2026-06-12 01:00 -- discussed pasta recipe"]
+    prompt = build_system_prompt(state)
+    assert "PREVIOUS CALLS" in prompt
+    assert "discussed pasta recipe" in prompt
+
+
+def test_ws_passes_session_end_callback(tmp_path, monkeypatch):
+    state = make_state(tmp_path, monkeypatch)
+    captured = {}
+
+    class StubSession:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def run(self, browser_messages):
+            return
+
+    import cc_caller.server as server_mod
+    monkeypatch.setattr(server_mod, "GeminiLiveSession", StubSession)
+    client = TestClient(create_app(state))
+    try:
+        with client.websocket_connect("/ws?token=sekrit"):
+            pass
+    except WebSocketDisconnect:
+        pass
+    assert callable(captured.get("on_session_end"))
+
+
 def test_ws_sends_transcript_frames_before_ready(tmp_path, monkeypatch):
     state = make_state(tmp_path, monkeypatch)
     fake_msgs = [{"role": "user", "text": "old question"},

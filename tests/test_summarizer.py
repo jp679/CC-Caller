@@ -3,6 +3,23 @@ from unittest.mock import patch, MagicMock
 from cc_caller.summarizer import summarize_output
 
 
+def test_summarize_conversation_returns_summary():
+    with patch("cc_caller.summarizer.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="Discussed pasta pot size.\n", stderr="")
+        from cc_caller.summarizer import summarize_conversation
+        out = summarize_conversation("user: hi\nagent: hello")
+    assert out == "Discussed pasta pot size."
+    import tempfile
+    assert mock_run.call_args[1].get("cwd") == tempfile.gettempdir()
+
+
+def test_summarize_conversation_empty_on_failure():
+    with patch("cc_caller.summarizer.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="boom")
+        from cc_caller.summarizer import summarize_conversation
+        assert summarize_conversation("x") == ""
+
+
 def test_summarize_output_returns_summary_and_detail():
     fake_json = json.dumps({
         "summary": "I fixed the login bug. All tests pass. What's next?",

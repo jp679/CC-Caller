@@ -12,6 +12,23 @@ SUMMARIZE_PROMPT = (
 
 FALLBACK_SUMMARY = "Claude finished working but I couldn't generate a summary. Call back for details."
 
+CONVERSATION_PROMPT = (
+    "Summarize this voice call between a user and their coding assistant in "
+    "1-2 sentences: decisions made, tasks discussed, anything postponed. "
+    "Plain English, no markdown."
+)
+
+
+def summarize_conversation(voice_log_text):
+    """One-line memory of a voice call. Returns '' on any failure."""
+    result = subprocess.run(
+        ["claude", "-p", CONVERSATION_PROMPT + "\n\n---\n\n" + voice_log_text],
+        capture_output=True, text=True, cwd=tempfile.gettempdir(),
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
 
 def summarize_output(claude_output: str) -> dict:
     prompt = f"{SUMMARIZE_PROMPT}\n\n---\n\n{claude_output}"

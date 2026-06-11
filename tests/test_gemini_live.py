@@ -357,3 +357,31 @@ async def test_no_opening_no_client_content():
         await asyncio.sleep(0.1)
         assert not fake.received_of("clientContent")
         await h.stop()
+
+
+async def test_voice_log_coalesces_and_fires_on_session_end():
+    ended = {}
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.session.on_session_end = lambda log: ended.update({"log": log})
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"serverContent": {"inputTranscription": {"text": "hel"}}})
+        await fake.send({"serverContent": {"inputTranscription": {"text": "lo there"}}})
+        await fake.send({"serverContent": {"outputTranscription": {"text": "hi JP"}}})
+        await wait_until(lambda: len(h.session.voice_log) == 2)
+        assert h.session.voice_log[0] == ("user", "hello there")
+        await h.stop()
+    assert ended["log"] == [("user", "hello there"), ("agent", "hi JP")]
+
+
+async def test_no_session_end_callback_for_trivial_log():
+    ended = {}
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.session.on_session_end = lambda log: ended.update({"log": log})
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"serverContent": {"inputTranscription": {"text": "hi"}}})
+        await h.stop()
+    assert "log" not in ended

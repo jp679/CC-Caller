@@ -2,12 +2,13 @@
 import hmac
 import json
 import pathlib
+import threading
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from cc_caller import push, sessions
+from cc_caller import callermem, push, sessions, summarizer
 from cc_caller.gemini_live import GeminiLiveSession
 
 STATIC_DIR = pathlib.Path(__file__).resolve().parent / "static"
@@ -36,6 +37,15 @@ def build_system_prompt(state, resumed=None):
         for entry in state.task_manager.history[-5:]:
             prompt += "\nUser asked: {}\nResult: {}\n".format(
                 entry["task"], entry["summary"][:500])
+    notes = getattr(state.task_manager, "voice_notes", None)
+    if notes:
+        block = "\n\nPREVIOUS CALLS (your own memory of earlier conversations on this session):\n"
+        for n in notes:
+            line = "- {}\n".format(n)
+            if len(block) + len(line) > 1500:
+                break
+            block += line
+        prompt += block
     if state.task_manager.pending:
         prompt += ("\n\nPENDING RESULT -- the user has not heard this yet. Open the "
                    "conversation by telling them: {}\n".format(
@@ -148,6 +158,24 @@ def create_app(state):
                        "Greet them briefly, then tell them this finished result right away: "
                        + pend["summary"])
 
+        def on_session_end(voice_log):
+            text = "\n".join("{}: {}".format(r, t) for r, t in voice_log)
+            sid = state.task_manager.session_id
+
+            def distill():
+                note = summarizer.summarize_conversation(text)
+                if note:
+                    import time as time_mod
+                    stamp = time_mod.strftime("%Y-%m-%d %H:%M")
+                    try:
+                        callermem.append_voice_note(sid, "{} -- {}".format(stamp, note))
+                        if state.task_manager.session_id == sid:
+                            state.task_manager.voice_notes = callermem.load(sid)["voice_notes"]
+                    except Exception as e:
+                        print("[server] voice note save failed: {}".format(e))
+
+            threading.Thread(target=distill, daemon=True).start()
+
         session = GeminiLiveSession(
             api_key=state.api_key,
             system_prompt=build_system_prompt(state, resumed=resumed),
@@ -157,6 +185,7 @@ def create_app(state):
             on_ready=state.task_manager.take_pending,
             show_exchange=state.show_exchange,
             opening=opening,
+            on_session_end=on_session_end,
         )
         state.session_holder["session"] = session
 
