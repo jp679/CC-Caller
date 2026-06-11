@@ -59,11 +59,22 @@ def load_subscriptions():
         return []
     try:
         return json.loads(f.read_text())
-    except (ValueError, OSError):
+    except (ValueError, OSError) as e:
+        print("[push] Could not read subscriptions: {}".format(e))
         return []
 
 
 def save_subscriptions(subscriptions):
     f = _subs_file()
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps(subscriptions))
+    # Atomic write, created 0600 from the start (endpoints + crypto keys inside).
+    tmp = f.parent / (f.name + ".tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(json.dumps(subscriptions))
+        os.replace(str(tmp), str(f))
+    except BaseException:
+        if tmp.exists():
+            tmp.unlink()
+        raise
