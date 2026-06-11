@@ -62,14 +62,14 @@ def create_app(state):
 
     @app.get("/sw.js")
     async def service_worker():
-        return Response((STATIC_DIR / "sw.js").read_text(),
-                        media_type="application/javascript",
-                        headers={"Service-Worker-Allowed": "/"})
+        return FileResponse(STATIC_DIR / "sw.js",
+                            media_type="application/javascript",
+                            headers={"Service-Worker-Allowed": "/"})
 
     @app.get("/manifest.json")
     async def manifest():
-        return Response((STATIC_DIR / "manifest.json").read_text(),
-                        media_type="application/manifest+json")
+        return FileResponse(STATIC_DIR / "manifest.json",
+                            media_type="application/manifest+json")
 
     @app.get("/api/config")
     async def api_config(request: Request):
@@ -113,6 +113,11 @@ def create_app(state):
             await session.run(browser_messages())
         except Exception as e:
             print("[server] session error: {!r}".format(e))
+            try:
+                await websocket.send_json({"type": "error",
+                                           "message": "Session failed: {}".format(e)})
+            except Exception:
+                pass
         finally:
             if state.session_holder["session"] is session:
                 state.session_holder["session"] = None

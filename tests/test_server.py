@@ -87,6 +87,25 @@ def test_ws_accepts_good_token_and_runs_session(tmp_path, monkeypatch):
         ws.send_json({"type": "end"})
 
 
+def test_ws_session_failure_sends_error_frame(tmp_path, monkeypatch):
+    state = make_state(tmp_path, monkeypatch)
+
+    class ExplodingSession:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def run(self, browser_messages):
+            raise RuntimeError("Gemini Live setup failed")
+
+    import cc_caller.server as server_mod
+    monkeypatch.setattr(server_mod, "GeminiLiveSession", ExplodingSession)
+    client = TestClient(create_app(state))
+    with client.websocket_connect("/ws?token=sekrit") as ws:
+        msg = ws.receive_json()
+    assert msg["type"] == "error"
+    assert "Gemini Live setup failed" in msg["message"]
+
+
 def test_system_prompt_includes_history_and_pending(tmp_path, monkeypatch):
     state = make_state(tmp_path, monkeypatch)
     state.task_manager.history = [{"task": "fix auth", "summary": "auth fixed"}]

@@ -1,10 +1,13 @@
 {
   "name": "CC-Caller",
   "short_name": "CC-Caller",
-  "description": "Voice-driven Claude Code feedback loop",
-  "start_url": "/pwa",
+  "description": "Talk to Claude Code from your phone",
+  "start_url": "/?callback=0",
   "display": "standalone",
   "background_color": "#0a0a0a",
-  "theme_color": "#22c55e",
-  "orientation": "portrait"
+  "theme_color": "#0a0a0a",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
 }
