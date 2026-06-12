@@ -178,3 +178,143 @@ def test_run_claude_fresh_without_id_stays_anonymous():
         out, sid = run_claude("do it", "dead-session")
     # fresh attempt must not specify a session_id (anonymous)
     assert captured["calls"][1] == {"resume": None, "session_id": None}
+
+
+# ---------------------------------------------------------------------------
+# Item 3: richer error detail (errors list appended)
+# ---------------------------------------------------------------------------
+
+def _fake_messages_with_errors(errors_list):
+    """Fake query that yields a ResultMessage with is_error=True and errors list."""
+    from claude_agent_sdk import (ResultMessage, SystemMessage)
+
+    def make_query(prompt, options):
+        async def gen():
+            yield SystemMessage(subtype="init", data={"session_id": "err-sid"})
+            yield ResultMessage(
+                subtype="error_during_execution",
+                duration_ms=1, duration_api_ms=1,
+                is_error=True,
+                num_turns=2, session_id="err-sid",
+                result="task failed (error_during_execution)",
+                errors=errors_list,
+            )
+        return gen()
+
+    return make_query
+
+
+def test_error_detail_includes_errors_list():
+    import pytest as _pytest
+    from cc_caller.claude_worker import WorkerTaskError
+    fake = _fake_messages_with_errors(["turn 2 boom"])
+    with patch("cc_caller.claude_worker.query", new=fake):
+        with _pytest.raises(WorkerTaskError) as exc_info:
+            run_claude("do it", None)
+    assert "turn 2 boom" in str(exc_info.value)
+
+
+def test_error_detail_no_errors_field_is_unchanged():
+    """When errors is None the message is unchanged (no ' -- ' appended)."""
+    import pytest as _pytest
+    from cc_caller.claude_worker import WorkerTaskError
+    fake = _fake_messages_with_errors(None)
+    with patch("cc_caller.claude_worker.query", new=fake):
+        with _pytest.raises(WorkerTaskError) as exc_info:
+            run_claude("do it", None)
+    assert " -- " not in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Item 4: rate-limit event surfacing
+# ---------------------------------------------------------------------------
+
+def test_rate_limit_event_triggers_on_activity():
+    """RateLimitEvent yields an on_activity call with 'Rate limit:' prefix."""
+    from claude_agent_sdk import RateLimitEvent, RateLimitInfo
+
+    seen_activity = []
+
+    def make_query(prompt, options):
+        async def gen():
+            from claude_agent_sdk import SystemMessage, ResultMessage
+            yield SystemMessage(subtype="init", data={"session_id": "rl-sid"})
+            yield RateLimitEvent(
+                rate_limit_info=RateLimitInfo(status="allowed_warning", raw={}),
+                uuid="uuid-1",
+                session_id="rl-sid",
+            )
+            yield ResultMessage(
+                subtype="success", duration_ms=1, duration_api_ms=1,
+                is_error=False, num_turns=1, session_id="rl-sid", result="done",
+            )
+        return gen()
+
+    with patch("cc_caller.claude_worker.query", new=make_query):
+        run_claude("do it", None, on_activity=seen_activity.append)
+
+    assert any("Rate limit:" in s for s in seen_activity)
+
+
+# ---------------------------------------------------------------------------
+# Item 5: CC_MAX_TURNS env var wires to options.max_turns
+# ---------------------------------------------------------------------------
+
+def test_max_turns_env_wires_to_options(monkeypatch):
+    """CC_MAX_TURNS=3 → ClaudeAgentOptions.max_turns == 3."""
+    monkeypatch.setenv("CC_MAX_TURNS", "3")
+    captured = {}
+
+    def spy_query(prompt, options):
+        captured["max_turns"] = options.max_turns
+
+        async def gen():
+            from claude_agent_sdk import ResultMessage, SystemMessage
+            yield SystemMessage(subtype="init", data={"session_id": "mt-sid"})
+            yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1,
+                                is_error=False, num_turns=1, session_id="mt-sid", result="ok")
+        return gen()
+
+    with patch("cc_caller.claude_worker.query", new=spy_query):
+        run_claude("do it", None)
+    assert captured["max_turns"] == 3
+
+
+def test_max_turns_unset_is_none(monkeypatch):
+    """CC_MAX_TURNS absent → options.max_turns is None."""
+    monkeypatch.delenv("CC_MAX_TURNS", raising=False)
+    captured = {}
+
+    def spy_query(prompt, options):
+        captured["max_turns"] = options.max_turns
+
+        async def gen():
+            from claude_agent_sdk import ResultMessage, SystemMessage
+            yield SystemMessage(subtype="init", data={"session_id": "mt-sid"})
+            yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1,
+                                is_error=False, num_turns=1, session_id="mt-sid", result="ok")
+        return gen()
+
+    with patch("cc_caller.claude_worker.query", new=spy_query):
+        run_claude("do it", None)
+    assert captured["max_turns"] is None
+
+
+def test_max_turns_invalid_value_is_none(monkeypatch):
+    """CC_MAX_TURNS with non-digit value → options.max_turns is None."""
+    monkeypatch.setenv("CC_MAX_TURNS", "abc")
+    captured = {}
+
+    def spy_query(prompt, options):
+        captured["max_turns"] = options.max_turns
+
+        async def gen():
+            from claude_agent_sdk import ResultMessage, SystemMessage
+            yield SystemMessage(subtype="init", data={"session_id": "mt-sid"})
+            yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1,
+                                is_error=False, num_turns=1, session_id="mt-sid", result="ok")
+        return gen()
+
+    with patch("cc_caller.claude_worker.query", new=spy_query):
+        run_claude("do it", None)
+    assert captured["max_turns"] is None

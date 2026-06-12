@@ -17,7 +17,7 @@ dependencies = [
     "cryptography>=42.0",
     "qrcode>=7.4",
     "pyngrok>=7.2.0",
-    "claude-agent-sdk>=0.2",
+    "claude-agent-sdk>=0.2.97,<0.3",
 ]
 
 [project.scripts]

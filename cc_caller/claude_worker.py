@@ -1,5 +1,6 @@
 """Claude Code worker layer: sandboxed Agent SDK runs, sessions, judge prompts."""
 import asyncio
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -9,6 +10,11 @@ from claude_agent_sdk import (
     query, ClaudeAgentOptions, AssistantMessage, SystemMessage, ResultMessage,
     TextBlock, ToolUseBlock,
 )
+
+try:
+    from claude_agent_sdk import RateLimitEvent
+except ImportError:
+    RateLimitEvent = None
 
 
 NEED_INPUT_PROMPT = (
@@ -114,6 +120,7 @@ def _describe_tool_use(block):
 
 async def _run_task(instruction, resume_id, on_activity, cwd, create_id=None,
                    cancel_event=None):
+    max_turns_env = os.getenv("CC_MAX_TURNS", "").strip()
     options = ClaudeAgentOptions(
         system_prompt={"type": "preset", "preset": "claude_code",
                        "append": WORKER_SYSTEM_PROMPT},
@@ -121,6 +128,7 @@ async def _run_task(instruction, resume_id, on_activity, cwd, create_id=None,
         resume=resume_id,
         session_id=create_id if (create_id and not resume_id) else None,
         cwd=str(cwd) if cwd else None,
+        max_turns=int(max_turns_env) if max_turns_env.isdigit() else None,
     )
     session_id = resume_id
     texts = []
@@ -141,11 +149,21 @@ async def _run_task(instruction, resume_id, on_activity, cwd, create_id=None,
             elif isinstance(message, ResultMessage):
                 session_id = message.session_id or session_id
                 if message.is_error:
-                    raise WorkerTaskError(
-                        message.result or "task failed ({})".format(message.subtype))
+                    detail = message.result or "task failed ({})".format(message.subtype)
+                    errors = getattr(message, "errors", None)
+                    if errors:
+                        detail += " -- " + "; ".join(str(e) for e in errors)
+                    raise WorkerTaskError(detail)
                 result_text = message.result
+            elif RateLimitEvent is not None and isinstance(message, RateLimitEvent):
+                info = message.rate_limit_info
+                summary = "status={} type={}".format(
+                    info.status, info.rate_limit_type or "unknown")
+                if on_activity:
+                    on_activity("Rate limit: " + summary)
+                print("[worker] Rate limit: " + summary)
 
-    consume = asyncio.ensure_future(_consume())
+    consume = asyncio.create_task(_consume())
     try:
         while not consume.done():
             if cancel_event is not None and cancel_event.is_set():
