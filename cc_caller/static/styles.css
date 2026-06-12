@@ -54,3 +54,10 @@ footer .row button { flex: 1; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .cap.past { opacity: 0.55; }
+#textrow { display: flex; gap: 8px; }
+#textrow.hidden { display: none; }
+#textrow input {
+  flex: 1; background: #161616; border: 1px solid #333; border-radius: 10px;
+  color: #e5e5e5; padding: 12px; font-size: 15px;
+}
+#textrow button { flex: 0 0 auto; width: auto; padding: 12px 18px; }

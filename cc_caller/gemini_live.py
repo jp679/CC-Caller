@@ -71,6 +71,22 @@ REMEMBER_NOTE = {
     },
 }
 
+LIST_SESSIONS = {
+    "name": "listSessions",
+    "description": "List the recent Claude sessions available in this folder, "
+                   "with short labels. Use before switching sessions.",
+    "parameters": {"type": "OBJECT", "properties": {}},
+}
+
+SWITCH_SESSION = {
+    "name": "switchSession",
+    "description": "Switch future tasks to another Claude session from listSessions. "
+                   "Pass the session_id exactly as listed.",
+    "parameters": {"type": "OBJECT",
+                   "properties": {"session_id": {"type": "STRING"}},
+                   "required": ["session_id"]},
+}
+
 
 class GeminiLiveSession:
     """One Gemini Live conversation, bridged to one browser connection.
@@ -81,7 +97,8 @@ class GeminiLiveSession:
 
     def __init__(self, api_key, system_prompt, task_manager, send_to_browser,
                  model=None, ws_url=None, on_ready=None, show_exchange=False,
-                 opening=None, on_session_end=None, on_remember=None):
+                 opening=None, on_session_end=None, on_remember=None,
+                 on_list_sessions=None):
         self.api_key = api_key
         self.system_prompt = system_prompt
         self.tm = task_manager
@@ -93,6 +110,7 @@ class GeminiLiveSession:
         self.opening = opening
         self.on_session_end = on_session_end
         self.on_remember = on_remember
+        self.on_list_sessions = on_list_sessions
         self.async_tools = True
         self.alive = False
         self.ended = False
@@ -120,7 +138,8 @@ class GeminiLiveSession:
             },
             "systemInstruction": {"parts": [{"text": self.system_prompt}]},
             "tools": [{"functionDeclarations": [
-                ask, CHECK_STATUS, CANCEL_TASK, REMEMBER_NOTE, END_SESSION
+                ask, CHECK_STATUS, CANCEL_TASK, REMEMBER_NOTE,
+                LIST_SESSIONS, SWITCH_SESSION, END_SESSION,
             ]}],
             "realtimeInputConfig": {"automaticActivityDetection": {
                 "silenceDurationMs": int(os.getenv("GEMINI_VAD_SILENCE_MS", "2000")),
@@ -200,6 +219,11 @@ class GeminiLiveSession:
                 await self._ws.send(json.dumps({"realtimeInput": {"audio": {
                     "data": msg["data"], "mimeType": "audio/pcm;rate=16000",
                 }}}))
+            elif msg.get("type") == "text" and msg.get("text"):
+                await self._ws.send(json.dumps({"clientContent": {
+                    "turns": [{"role": "user", "parts": [{"text": msg["text"]}]}],
+                    "turnComplete": True,
+                }}))
             elif msg.get("type") == "end":
                 break
         await self._ws.close()
@@ -308,6 +332,33 @@ class GeminiLiveSession:
                     await self._respond(fc_id, name, {"saved": True})
             else:
                 await self._respond(fc_id, name, {"saved": False})
+        elif name == "listSessions":
+            entries = []
+            if self.on_list_sessions:
+                try:
+                    entries = self.on_list_sessions()
+                except Exception as e:
+                    print("[gemini] listSessions failed: {}".format(e))
+            await self._respond(fc_id, name, {
+                "current": {"id": getattr(self.tm, "session_id", None),
+                            "name": getattr(self.tm, "session_name", None)},
+                "sessions": [{"session_id": s["session_id"], "label": s["label"],
+                              "age": s["age"]} for s in entries],
+            })
+        elif name == "switchSession":
+            sid = (args.get("session_id") or "").strip()
+            ok = bool(sid) and getattr(self.tm, "switch_session", lambda **k: False)(session_id=sid)
+            if ok:
+                await self.send_to_browser({"type": "session", "session": {"id": sid}})
+                await self._respond(fc_id, name, {
+                    "switched": True,
+                    "note": "Future tasks go to that session. Its full context loads on the next reconnect.",
+                })
+            else:
+                await self._respond(fc_id, name, {
+                    "switched": False,
+                    "message": "Could not switch (a task may be running, or the id is invalid).",
+                })
         elif name == "endSession":
             self.ended = True
             await self._respond(fc_id, name, {"status": "ending"})

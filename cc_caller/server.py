@@ -66,6 +66,19 @@ def build_system_prompt(state, resumed=None, suppress_pending=False):
     return prompt
 
 
+def session_listing(state):
+    """Recent sessions for this folder with callermem titles overlaid."""
+    entries = sessions.recent_sessions(limit=5)
+    for s in entries:
+        try:
+            title = callermem.load(s["session_id"]).get("title")
+            if title:
+                s["label"] = title
+        except Exception:
+            pass
+    return entries
+
+
 def _token_ok(state, supplied):
     return bool(supplied) and hmac.compare_digest(state.token, supplied)
 
@@ -112,14 +125,7 @@ def create_app(state):
     async def api_sessions(request: Request):
         require_token(request)
         tm = state.task_manager
-        recent = sessions.recent_sessions(limit=5)
-        for s in recent:
-            try:
-                title = callermem.load(s["session_id"]).get("title")
-            except Exception:
-                title = None
-            if title:
-                s["label"] = title
+        recent = session_listing(state)
         current = {"id": tm.session_id, "name": tm.session_name}
         try:
             current["title"] = callermem.load(tm.session_id).get("title")
@@ -215,6 +221,8 @@ def create_app(state):
             if state.task_manager.session_id == sid:
                 state.task_manager.voice_notes = callermem.load(sid)["voice_notes"]
 
+        on_list_sessions = lambda: session_listing(state)
+
         session = GeminiLiveSession(
             api_key=state.api_key,
             system_prompt=build_system_prompt(state, resumed=resumed,
@@ -227,6 +235,7 @@ def create_app(state):
             opening=opening,
             on_session_end=on_session_end,
             on_remember=on_remember,
+            on_list_sessions=on_list_sessions,
         )
         state.session_holder["session"] = session
 

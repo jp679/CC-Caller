@@ -77,8 +77,10 @@ async def test_handshake_declares_non_blocking_tools():
         setup = fake.received_of("setup")[0]["setup"]
         decls = setup["tools"][0]["functionDeclarations"]
         names = [d["name"] for d in decls]
-        assert names == ["askCodingAgent", "checkStatus", "cancelTask", "rememberNote",
-                         "endSession"]
+        assert names == [
+            "askCodingAgent", "checkStatus", "cancelTask", "rememberNote",
+            "listSessions", "switchSession", "endSession",
+        ]
         assert decls[0]["behavior"] == "NON_BLOCKING"
         assert setup["systemInstruction"]["parts"][0]["text"] == "PROMPT"
         assert h.session.async_tools is True
@@ -559,4 +561,121 @@ async def test_cancel_task_when_idle_sends_cancelled_false():
         # No status:done sent when idle
         assert not any(m.get("type") == "status" and m.get("state") == "done"
                        for m in h.to_browser)
+        await h.stop()
+
+
+# ---------------------------------------------------------------------------
+# Batch D round 1: session switching + typed input
+# ---------------------------------------------------------------------------
+
+async def test_handshake_declares_seven_tools():
+    """After adding listSessions and switchSession there are 7 declared tools."""
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        setup = fake.received_of("setup")[0]["setup"]
+        decls = setup["tools"][0]["functionDeclarations"]
+        names = [d["name"] for d in decls]
+        assert names == [
+            "askCodingAgent", "checkStatus", "cancelTask", "rememberNote",
+            "listSessions", "switchSession", "endSession",
+        ]
+        await h.stop()
+
+
+async def test_list_sessions_returns_wired_data():
+    """listSessions toolCall invokes on_list_sessions and returns sessions list + current."""
+    sessions_data = [{"session_id": "aaa", "label": "Pasta tweaks", "age": "5m ago"}]
+
+    async with FakeGemini() as fake:
+        tm = StubTM()
+        tm.session_id = "current-id"
+        tm.session_name = "my-proj"
+        h = Harness(fake, tm)
+        h.session.on_list_sessions = lambda: sessions_data
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "ls1", "name": "listSessions", "args": {}}
+        ]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        resp = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        assert resp["id"] == "ls1"
+        body = resp["response"]
+        assert body["current"] == {"id": "current-id", "name": "my-proj"}
+        assert len(body["sessions"]) == 1
+        assert body["sessions"][0]["session_id"] == "aaa"
+        assert body["sessions"][0]["label"] == "Pasta tweaks"
+        assert body["sessions"][0]["age"] == "5m ago"
+        await h.stop()
+
+
+async def test_list_sessions_without_callback_returns_empty_list():
+    """listSessions with no on_list_sessions set returns empty list, no crash."""
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        # on_list_sessions not set (None)
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "ls2", "name": "listSessions", "args": {}}
+        ]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        resp = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        assert resp["response"]["sessions"] == []
+        await h.stop()
+
+
+async def test_switch_session_ok_sends_browser_frame_and_switched_true():
+    """switchSession with a valid session_id: browser gets {type:session}, response switched True."""
+    async with FakeGemini() as fake:
+        tm = StubTM()
+        tm.switch_session = lambda **kw: True
+        h = Harness(fake, tm)
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "sw1", "name": "switchSession", "args": {"session_id": "aaa"}}
+        ]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        resp = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        assert resp["response"]["switched"] is True
+        session_frames = [m for m in h.to_browser if m.get("type") == "session"]
+        assert len(session_frames) == 1
+        assert session_frames[0]["session"]["id"] == "aaa"
+        await h.stop()
+
+
+async def test_switch_session_refused_returns_switched_false():
+    """switchSession when tm.switch_session returns False: switched False, no browser frame."""
+    async with FakeGemini() as fake:
+        tm = StubTM()
+        tm.switch_session = lambda **kw: False
+        h = Harness(fake, tm)
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"toolCall": {"functionCalls": [
+            {"id": "sw2", "name": "switchSession", "args": {"session_id": "bbb"}}
+        ]}})
+        await wait_until(lambda: fake.received_of("toolResponse"))
+        resp = fake.received_of("toolResponse")[0]["toolResponse"]["functionResponses"][0]
+        assert resp["response"]["switched"] is False
+        assert "message" in resp["response"]
+        assert not any(m.get("type") == "session" for m in h.to_browser)
+        await h.stop()
+
+
+async def test_typed_text_browser_message_forwarded_as_client_content():
+    """Browser sends {type:text, text:'hello'}: fake Gemini receives a clientContent turn."""
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await h.queue.put({"type": "text", "text": "hello from keyboard"})
+        await wait_until(lambda: fake.received_of("clientContent"))
+        cc = fake.received_of("clientContent")[0]["clientContent"]
+        assert cc["turnComplete"] is True
+        assert cc["turns"][0]["role"] == "user"
+        assert cc["turns"][0]["parts"][0]["text"] == "hello from keyboard"
         await h.stop()

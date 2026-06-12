@@ -228,11 +228,13 @@ async function connect() {
       $('connect').textContent = 'Hang up';
       $('connect').classList.add('connected');
       $('mute').classList.remove('hidden');
+      $('textrow').classList.remove('hidden');
       await startMic();
       try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
     } else if (msg.type === 'audio') playAudio(msg.data);
     else if (msg.type === 'caption') addCaption(msg.role, msg.text);
     else if (msg.type === 'transcript') addPast(msg.role, msg.text);
+    else if (msg.type === 'session') $('session-label').textContent = (msg.session.title || msg.session.name || (msg.session.id || '').slice(0, 8));
     else if (msg.type === 'status') {
       if (msg.state === 'working') {
         if (!workingSince) setWorking(true);
@@ -268,9 +270,22 @@ function disconnect(remote) {
   $('mute').textContent = 'Mute';
   $('mute').classList.remove('muted');
   $('mute').classList.add('hidden');
+  $('textrow').classList.add('hidden');
   setStatus('disconnected', 'idle');
   loadSessions();
 }
+
+function sendText() {
+  const input = $('textinput');
+  const text = input.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'text', text: text }));
+  addCaption('user', text);
+  input.value = '';
+}
+
+$('textsend').onclick = sendText;
+$('textinput').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendText(); });
 
 $('connect').onclick = () => (ws ? disconnect() : connect());
 $('mute').onclick = () => {

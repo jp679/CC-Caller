@@ -453,6 +453,54 @@ def test_ws_passes_remember_callback(tmp_path, monkeypatch):
     assert callable(captured.get("on_remember"))
 
 
+def test_ws_passes_on_list_sessions_callback(tmp_path, monkeypatch):
+    """ws_bridge passes a callable on_list_sessions to GeminiLiveSession."""
+    state = make_state(tmp_path, monkeypatch)
+    captured = {}
+
+    class StubSession:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def run(self, browser_messages):
+            return
+
+    import cc_caller.server as server_mod
+    monkeypatch.setattr(server_mod, "GeminiLiveSession", StubSession)
+    client = TestClient(create_app(state))
+    try:
+        with client.websocket_connect("/ws?token=sekrit"):
+            pass
+    except WebSocketDisconnect:
+        pass
+    assert callable(captured.get("on_list_sessions"))
+
+
+def test_session_listing_helper_overlays_titles(tmp_path, monkeypatch):
+    """session_listing() returns recent sessions with callermem titles overlaid."""
+    from cc_caller.server import session_listing
+
+    fake_entries = [
+        {"session_id": "aaa", "label": "from transcript", "age": "5m ago"},
+        {"session_id": "bbb", "label": "keep me", "age": "6m ago"},
+    ]
+
+    class StubCallerMem:
+        @staticmethod
+        def load(session_id):
+            if session_id == "aaa":
+                return {"title": "Better title", "history": [], "pending": None, "voice_notes": []}
+            return {"title": None, "history": [], "pending": None, "voice_notes": []}
+
+    import cc_caller.server as server_mod
+    monkeypatch.setattr(server_mod.sessions, "recent_sessions", lambda limit=5: list(fake_entries))
+    monkeypatch.setattr(server_mod, "callermem", StubCallerMem)
+
+    result = session_listing(None)
+    assert result[0]["label"] == "Better title"
+    assert result[1]["label"] == "keep me"
+
+
 def test_ws_sends_transcript_frames_before_ready(tmp_path, monkeypatch):
     state = make_state(tmp_path, monkeypatch)
     fake_msgs = [{"role": "user", "text": "old question"},
