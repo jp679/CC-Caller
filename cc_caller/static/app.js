@@ -11,6 +11,14 @@ let autoConnected = qs.get('callback') === '1';
 let speakTimer = null;
 let muted = false;
 
+// Auto-reconnect state
+let manualDisconnect = false;
+let reconnectAttempt = 0;
+let reconnectTimer = null;
+
+// Task card state
+let currentCard = null;
+
 function setStatus(text, cls) {
   const el = $('status');
   el.textContent = text;
@@ -32,13 +40,38 @@ function addCaption(role, text) {
   box.scrollTop = box.scrollHeight;
 }
 
-function addExchange(role, text) {
+function taskCard(task) {
   const box = $('captions');
-  const div = document.createElement('div');
-  div.className = 'xchg ' + role;
-  div.textContent = (role === 'task' ? '→ Claude: ' : '✓ Claude: ') + text;
-  box.appendChild(div);
+  const card = document.createElement('div');
+  card.className = 'card running';
+  const title = document.createElement('div');
+  title.className = 'card-title';
+  title.textContent = task.length > 70 ? task.slice(0, 70) + '…' : task;
+  const state = document.createElement('div');
+  state.className = 'card-state';
+  state.textContent = 'running…';
+  const body = document.createElement('div');
+  body.className = 'card-body hidden';
+  card.appendChild(title);
+  card.appendChild(state);
+  card.appendChild(body);
+  card.onclick = () => body.classList.toggle('hidden');
+  box.appendChild(card);
   box.scrollTop = box.scrollHeight;
+  return card;
+}
+
+function cardState(text) {
+  if (currentCard) currentCard.querySelector('.card-state').textContent = text;
+}
+
+function finishCard(summary, ok) {
+  if (!currentCard) return;
+  currentCard.classList.remove('running');
+  currentCard.classList.add(ok ? 'done' : 'stopped');
+  currentCard.querySelector('.card-state').textContent = ok ? 'done — tap for summary' : 'cancelled';
+  if (summary) currentCard.querySelector('.card-body').textContent = summary;
+  currentCard = null;
 }
 
 function b64ToF32(b64) {
@@ -212,6 +245,7 @@ function addPast(role, text) {
 
 async function connect() {
   $('captions').innerHTML = '';
+  currentCard = null;
   setupPush();
   setStatus('connecting…', 'idle');
   const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
@@ -219,6 +253,8 @@ async function connect() {
   ws.onmessage = async (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'ready') {
+      reconnectAttempt = 0;
+      manualDisconnect = false;
       const s = msg.session || {};
       $('session-label').textContent = (chosenSession && chosenSession.label) ||
         s.name || (s.id ? s.id.slice(0, 8) : '');
@@ -238,17 +274,51 @@ async function connect() {
     else if (msg.type === 'status') {
       if (msg.state === 'working') {
         if (!workingSince) setWorking(true);
-        if (msg.activity) $('activity').textContent = ' — ' + msg.activity;
-      } else if (msg.state === 'done') setWorking(false);
-      else if (msg.state === 'ended') disconnect();
-    } else if (msg.type === 'exchange') addExchange(msg.role, msg.text);
+        if (msg.activity) {
+          $('activity').textContent = ' — ' + msg.activity;
+          cardState(msg.activity);
+        }
+      } else if (msg.state === 'done') {
+        setWorking(false);
+        finishCard(null, false);
+      } else if (msg.state === 'ended') {
+        manualDisconnect = true;
+        disconnect();
+      }
+    } else if (msg.type === 'exchange') {
+      if (msg.role === 'task') {
+        currentCard = taskCard(msg.text);
+      } else if (msg.role === 'result') {
+        finishCard(msg.text, true);
+      } else {
+        // defensive: any other exchange roles
+        const box = $('captions');
+        const div = document.createElement('div');
+        div.className = 'xchg ' + msg.role;
+        div.textContent = msg.text;
+        box.appendChild(div);
+        box.scrollTop = box.scrollHeight;
+      }
+    }
     else if (msg.type === 'error') addCaption('agent', '⚠ ' + msg.message);
   };
-  ws.onclose = () => disconnect(true);
+  ws.onclose = () => {
+    disconnect(true);
+    if (!manualDisconnect && reconnectAttempt < 3) {
+      reconnectAttempt += 1;
+      const delay = 1000 * Math.pow(2, reconnectAttempt - 1);
+      setStatus('reconnecting…', 'idle');
+      reconnectTimer = setTimeout(connect, delay);
+    }
+  };
   autoConnected = false;
 }
 
 function disconnect(remote) {
+  if (manualDisconnect && reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'end' }));
     ws.close();
@@ -287,7 +357,17 @@ function sendText() {
 $('textsend').onclick = sendText;
 $('textinput').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendText(); });
 
-$('connect').onclick = () => (ws ? disconnect() : connect());
+$('connect').onclick = () => {
+  if (ws) {
+    manualDisconnect = true;
+    disconnect();
+  } else {
+    manualDisconnect = false;
+    reconnectAttempt = 0;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    connect();
+  }
+};
 $('mute').onclick = () => {
   muted = !muted;
   $('mute').textContent = muted ? 'Unmute' : 'Mute';

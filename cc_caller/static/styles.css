@@ -29,13 +29,18 @@ button.secondary { background: #1f2937; color: #d1d5db; }
 button.secondary.muted { background: #78350f; color: #fde68a; }
 footer .row { display: flex; gap: 10px; }
 footer .row button { flex: 1; }
-.xchg {
-  max-width: 100%; padding: 8px 12px; border-radius: 8px;
-  font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12.5px;
-  line-height: 1.4; background: #111827; color: #94a3b8;
-  border-left: 3px solid #334155; white-space: pre-wrap;
+.card {
+  max-width: 100%; padding: 10px 12px; border-radius: 10px;
+  background: #111827; border-left: 3px solid #f59e0b; cursor: pointer;
 }
-.xchg.result { border-left-color: #22c55e; }
+.card.done { border-left-color: #22c55e; }
+.card.stopped { border-left-color: #6b7280; }
+.card-title { font-size: 13.5px; color: #e5e7eb; }
+.card-state { font-size: 11.5px; color: #94a3b8; margin-top: 3px;
+  font-family: ui-monospace, SFMono-Regular, monospace; }
+.card-body { font-size: 13px; color: #cbd5e1; margin-top: 8px; line-height: 1.45;
+  white-space: pre-wrap; }
+.card-body.hidden { display: none; }
 #sessions { display: flex; flex-direction: column; gap: 6px; max-height: 38dvh; overflow-y: auto; }
 #sessions.hidden { display: none; }
 .sess {
