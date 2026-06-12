@@ -249,6 +249,8 @@ class GeminiLiveSession:
 
             sc = data.get("serverContent")
             if sc:
+                if sc.get("interrupted"):
+                    await self.send_to_browser({"type": "interrupted"})
                 text = sc.get("inputTranscription", {}).get("text")
                 if text:
                     self._log_voice("user", text)

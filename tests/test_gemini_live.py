@@ -666,6 +666,33 @@ async def test_switch_session_refused_returns_switched_false():
         await h.stop()
 
 
+async def test_server_interrupted_forwarded_to_browser():
+    """serverContent.interrupted true -> browser receives {type:interrupted}."""
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"serverContent": {"interrupted": True}})
+        await wait_until(lambda: any(m.get("type") == "interrupted" for m in h.to_browser))
+        assert {"type": "interrupted"} in h.to_browser
+        await h.stop()
+
+
+async def test_server_content_without_interrupted_sends_no_interrupted_frame():
+    """A serverContent frame with no interrupted flag must not emit interrupted."""
+    async with FakeGemini() as fake:
+        h = Harness(fake, StubTM())
+        h.start()
+        await wait_until(lambda: any(m.get("type") == "ready" for m in h.to_browser))
+        await fake.send({"serverContent": {
+            "outputTranscription": {"text": "hi"},
+            "modelTurn": {"parts": [{"inlineData": {"data": "UENN"}}]},
+        }})
+        await wait_until(lambda: any(m.get("type") == "audio" for m in h.to_browser))
+        assert not any(m.get("type") == "interrupted" for m in h.to_browser)
+        await h.stop()
+
+
 async def test_typed_text_browser_message_forwarded_as_client_content():
     """Browser sends {type:text, text:'hello'}: fake Gemini receives a clientContent turn."""
     async with FakeGemini() as fake:

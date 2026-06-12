@@ -11,6 +11,16 @@ let autoConnected = qs.get('callback') === '1';
 let speakTimer = null;
 let muted = false;
 
+// Playback routed through an <audio> element so the browser AEC can use the
+// agent's TTS as a reference signal (WebAudio AudioContext output is invisible
+// to AEC, which causes the agent to hear -- and barge in on -- itself).
+let masterGain = null, audioSink = null, activeSources = [];
+
+// Onset gate: drop mic frames for a short window each time playback STARTS after
+// silence, to cover AEC convergence. Barge-in is preserved during steady state.
+const ONSET_GATE_MS = 700;
+let micGateUntil = 0;
+
 // Auto-reconnect state
 let manualDisconnect = false;
 let reconnectAttempt = 0;
@@ -89,18 +99,56 @@ function bufToB64(buf) {
   return btoa(bin);
 }
 
+function ensurePlayback() {
+  if (spkCtx) return;
+  spkCtx = new AudioContext({ sampleRate: 24000 });
+  masterGain = spkCtx.createGain();
+  const dest = spkCtx.createMediaStreamDestination();
+  masterGain.connect(dest);
+  audioSink = new Audio();
+  audioSink.srcObject = dest.stream;
+  audioSink.play().catch(() => {
+    // Autoplay refused (e.g. non-gesture reconnect on iOS): fall back to direct
+    // output. AEC reference is then lost (acceptable), but audio stays audible.
+    try { masterGain.disconnect(dest); } catch (e) {}
+    masterGain.connect(spkCtx.destination);
+    audioSink = null;
+  });
+}
+
 function playAudio(b64) {
-  if (!spkCtx) spkCtx = new AudioContext({ sampleRate: 24000 });
+  ensurePlayback();
+  // Onset = playback queue is drained (idle) before this buffer is scheduled.
+  // Compute BEFORE updating playHead so the gate arms once per utterance start.
+  const idle = !spkCtx || playHead <= spkCtx.currentTime;
   const f32 = b64ToF32(b64);
   const buf = spkCtx.createBuffer(1, f32.length, 24000);
   buf.copyToChannel(f32, 0);
   const src = spkCtx.createBufferSource();
   src.buffer = buf;
-  src.connect(spkCtx.destination);
+  src.connect(masterGain);
+  activeSources.push(src);
+  src.onended = () => {
+    const i = activeSources.indexOf(src);
+    if (i !== -1) activeSources.splice(i, 1);
+  };
   const t = Math.max(spkCtx.currentTime, playHead);
   src.start(t);
   playHead = t + buf.duration;
+  if (idle) micGateUntil = performance.now() + ONSET_GATE_MS;
   markSpeaking();
+}
+
+function flushPlayback() {
+  for (const src of activeSources.splice(0)) {
+    try { src.stop(); } catch (e) {}
+  }
+  if (spkCtx) playHead = spkCtx.currentTime;
+  if (speakTimer) { clearTimeout(speakTimer); speakTimer = null; }
+  const cur = $('status');
+  if (cur.className.indexOf('speaking') !== -1) {
+    setStatus(workingSince ? 'working' : 'live', workingSince ? 'working' : 'live');
+  }
 }
 
 async function startMic() {
@@ -112,7 +160,7 @@ async function startMic() {
   const src = micCtx.createMediaStreamSource(micStream);
   const node = new AudioWorkletNode(micCtx, 'pcm-capture');
   node.port.onmessage = (e) => {
-    if (muted) return;
+    if (muted || performance.now() < micGateUntil) return;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'audio', data: bufToB64(e.data) }));
     }
@@ -248,6 +296,9 @@ async function connect() {
   currentCard = null;
   setupPush();
   setStatus('connecting…', 'idle');
+  // Open playback under the click gesture (manual connect) so audioSink.play()
+  // is permitted; reconnect paths rely on the lazy call in playAudio + fallback.
+  ensurePlayback();
   const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
   ws = new WebSocket(proto + location.host + '/ws?token=' + TOKEN + (autoConnected ? '' : sessionParam()));
   ws.onmessage = async (ev) => {
@@ -300,6 +351,7 @@ async function connect() {
         box.scrollTop = box.scrollHeight;
       }
     }
+    else if (msg.type === 'interrupted') flushPlayback();
     else if (msg.type === 'error') addCaption('agent', '⚠ ' + msg.message);
   };
   ws.onclose = () => {
@@ -326,8 +378,12 @@ function disconnect(remote) {
   ws = null;
   if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
   if (micCtx) { micCtx.close(); micCtx = null; }
+  for (const src of activeSources.splice(0)) { try { src.stop(); } catch (e) {} }
+  if (audioSink) { audioSink.pause(); audioSink = null; }
   if (spkCtx) { spkCtx.close(); spkCtx = null; }
+  masterGain = null;
   playHead = 0;
+  micGateUntil = 0;
   if (wakeLock) { wakeLock.release(); wakeLock = null; }
   clearInterval(elapsedTimer);
   clearTimeout(speakTimer);
